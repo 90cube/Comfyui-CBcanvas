@@ -220,11 +220,22 @@ function updateCanvasMode(node) {
 function updateBrushSettings(node) {
     const canvas = node.fabricCanvas;
 
-    if (canvas.isDrawingMode && canvas.freeDrawingBrush) {
+    // Apply settings immediately to current tool
+    if (node.currentTool === "brush" || node.currentTool === "eraser") {
+        // Recreate the brush with new settings to ensure immediate application
         if (node.currentTool === "brush") {
+            canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
             canvas.freeDrawingBrush.color = node.brushColor;
+            canvas.freeDrawingBrush.width = node.brushSize;
+        } else if (node.currentTool === "eraser") {
+            canvas.freeDrawingBrush = new fabric.EraserBrush(canvas);
+            canvas.freeDrawingBrush.width = node.brushSize;
         }
-        canvas.freeDrawingBrush.width = node.brushSize;
+
+        // Ensure drawing mode is still active
+        if (!canvas.isDrawingMode) {
+            canvas.isDrawingMode = true;
+        }
     }
 }
 
