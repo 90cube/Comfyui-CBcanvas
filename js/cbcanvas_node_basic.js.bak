@@ -1,0 +1,354 @@
+/**
+ * CBCanvas Node - Canvas with Aspect Ratio Control
+ * Simple canvas node with 13 aspect ratio presets
+ */
+
+import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
+
+// Load CSS
+const style = document.createElement("link");
+style.rel = "stylesheet";
+style.type = "text/css";
+style.href = new URL("cbcanvas_node.css", import.meta.url).href;
+document.head.appendChild(style);
+
+const ASPECT_RATIOS = {
+    "-6": { ratio: "21:9", width: 1536, height: 640, value: 2.33 },
+    "-5": { ratio: "2:1", width: 1440, height: 720, value: 2.0 },
+    "-4": { ratio: "16:9", width: 1344, height: 768, value: 1.78 },
+    "-3": { ratio: "3:2", width: 1216, height: 832, value: 1.5 },
+    "-2": { ratio: "4:3", width: 1152, height: 896, value: 1.33 },
+    "-1": { ratio: "5:4", width: 1144, height: 912, value: 1.25 },
+    "0": { ratio: "1:1", width: 1024, height: 1024, value: 1.0 },
+    "1": { ratio: "4:5", width: 912, height: 1144, value: 0.8 },
+    "2": { ratio: "3:4", width: 896, height: 1152, value: 0.75 },
+    "3": { ratio: "2:3", width: 832, height: 1216, value: 0.67 },
+    "4": { ratio: "9:16", width: 768, height: 1344, value: 0.56 },
+    "5": { ratio: "1:2", width: 720, height: 1440, value: 0.5 },
+    "6": { ratio: "9:21", width: 640, height: 1536, value: 0.43 }
+};
+
+// Max display size for canvas (will scale to fit)
+const MAX_DISPLAY_SIZE = 400;
+
+// Extension name
+const extensionName = "CBCanvas.CBCanvasNode";
+
+// Store canvas instances
+const canvasInstances = {};
+
+/**
+ * Calculate display size maintaining aspect ratio
+ */
+function calculateDisplaySize(width, height, maxSize) {
+    const ratio = width / height;
+    let displayWidth, displayHeight;
+
+    if (width > height) {
+        // Landscape
+        displayWidth = Math.min(width, maxSize);
+        displayHeight = displayWidth / ratio;
+    } else {
+        // Portrait
+        displayHeight = Math.min(height, maxSize);
+        displayWidth = displayHeight * ratio;
+    }
+
+    return { displayWidth: Math.round(displayWidth), displayHeight: Math.round(displayHeight) };
+}
+
+/**
+ * Create a simple canvas element
+ */
+function createCanvas(width, height) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    // Calculate display size
+    const { displayWidth, displayHeight } = calculateDisplaySize(width, height, MAX_DISPLAY_SIZE);
+
+    // Set display size via CSS
+    canvas.style.width = displayWidth + "px";
+    canvas.style.height = displayHeight + "px";
+    canvas.style.border = "1px solid #666";
+    canvas.style.backgroundColor = "#ffffff";
+    canvas.style.imageRendering = "auto";
+    canvas.style.display = "block";
+
+    return canvas;
+}
+
+/**
+ * Initialize canvas with basic drawing capabilities
+ */
+function initializeCanvas(canvas) {
+    const ctx = canvas.getContext("2d");
+    let isDrawing = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    // Get scale factor
+    function getScale() {
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: canvas.width / rect.width,
+            y: canvas.height / rect.height
+        };
+    }
+
+    // Basic drawing functionality
+    canvas.addEventListener("mousedown", (e) => {
+        isDrawing = true;
+        const rect = canvas.getBoundingClientRect();
+        const scale = getScale();
+        lastX = (e.clientX - rect.left) * scale.x;
+        lastY = (e.clientY - rect.top) * scale.y;
+    });
+
+    canvas.addEventListener("mousemove", (e) => {
+        if (!isDrawing) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const scale = getScale();
+        const x = (e.clientX - rect.left) * scale.x;
+        const y = (e.clientY - rect.top) * scale.y;
+
+        ctx.strokeStyle = "#000000";
+        ctx.lineWidth = 3;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
+        ctx.beginPath();
+        ctx.moveTo(lastX, lastY);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+
+        lastX = x;
+        lastY = y;
+    });
+
+    canvas.addEventListener("mouseup", () => {
+        isDrawing = false;
+    });
+
+    canvas.addEventListener("mouseleave", () => {
+        isDrawing = false;
+    });
+
+    return canvas;
+}
+
+/**
+ * Update canvas size based on aspect ratio
+ */
+function updateCanvasSize(node, aspectRatioValue) {
+    const ratioInfo = ASPECT_RATIOS[String(aspectRatioValue)];
+    if (!ratioInfo) return;
+
+    const { width, height, ratio } = ratioInfo;
+
+    console.log(`CBCanvas: Updating to ${ratio} (${width}x${height})`);
+
+    // Update canvas if it exists
+    if (node.canvasElement) {
+        // Save current canvas content
+        const tempCanvas = document.createElement("canvas");
+        const tempCtx = tempCanvas.getContext("2d");
+        tempCanvas.width = node.canvasElement.width;
+        tempCanvas.height = node.canvasElement.height;
+        tempCtx.drawImage(node.canvasElement, 0, 0);
+
+        // Update canvas resolution
+        node.canvasElement.width = width;
+        node.canvasElement.height = height;
+
+        // Calculate and set display size
+        const { displayWidth, displayHeight } = calculateDisplaySize(width, height, MAX_DISPLAY_SIZE);
+        node.canvasElement.style.width = displayWidth + "px";
+        node.canvasElement.style.height = displayHeight + "px";
+
+        // Clear and redraw content (scaled to fit)
+        const ctx = node.canvasElement.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, width, height);
+
+        // Scale old content to new size
+        if (tempCanvas.width > 0 && tempCanvas.height > 0) {
+            ctx.drawImage(tempCanvas, 0, 0, width, height);
+        }
+
+        // Update info label
+        if (node.ratioLabel) {
+            node.ratioLabel.textContent = `Ratio: ${ratio} (${width}x${height}) - Display: ${displayWidth}x${displayHeight}`;
+        }
+
+        // Force node to update its size
+        node.setSize?.(node.computeSize());
+        app.graph.setDirtyCanvas(true);
+    }
+}
+
+// Register extension
+app.registerExtension({
+    name: extensionName,
+
+    async beforeRegisterNodeDef(nodeType, nodeData, app) {
+        if (nodeData.name === "CBCanvasNode") {
+            console.log("CBCanvas: Registering CBCanvasNode");
+
+            // Add canvas widget on node creation
+            const onNodeCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function () {
+                const result = onNodeCreated?.apply(this, arguments);
+
+                // Get initial aspect ratio value
+                const aspectRatioWidget = this.widgets?.find(
+                    w => w.name === "aspect_ratio_slider"
+                );
+                const initialRatio = aspectRatioWidget?.value ?? 0;
+                const ratioInfo = ASPECT_RATIOS[String(initialRatio)];
+
+                console.log(`CBCanvas: Creating node with initial ratio ${ratioInfo.ratio}`);
+
+                // Create canvas element
+                this.canvasElement = createCanvas(ratioInfo.width, ratioInfo.height);
+                initializeCanvas(this.canvasElement);
+
+                // Store in instances
+                canvasInstances[this.id] = this.canvasElement;
+
+                // Create canvas container
+                const canvasContainer = document.createElement("div");
+                canvasContainer.style.padding = "10px";
+                canvasContainer.style.backgroundColor = "#2a2a2a";
+                canvasContainer.style.borderRadius = "4px";
+                canvasContainer.style.marginTop = "5px";
+                canvasContainer.style.display = "flex";
+                canvasContainer.style.flexDirection = "column";
+                canvasContainer.style.alignItems = "center";
+
+                // Create ratio label
+                const { displayWidth, displayHeight } = calculateDisplaySize(ratioInfo.width, ratioInfo.height, MAX_DISPLAY_SIZE);
+                this.ratioLabel = document.createElement("div");
+                this.ratioLabel.textContent = `Ratio: ${ratioInfo.ratio} (${ratioInfo.width}x${ratioInfo.height}) - Display: ${displayWidth}x${displayHeight}`;
+                this.ratioLabel.style.color = "#ffffff";
+                this.ratioLabel.style.fontSize = "11px";
+                this.ratioLabel.style.marginBottom = "8px";
+                this.ratioLabel.style.fontFamily = "monospace";
+                this.ratioLabel.style.textAlign = "center";
+
+                // Add clear button
+                const clearButton = document.createElement("button");
+                clearButton.textContent = "Clear Canvas";
+                clearButton.style.marginTop = "8px";
+                clearButton.style.padding = "5px 10px";
+                clearButton.style.backgroundColor = "#444";
+                clearButton.style.color = "#fff";
+                clearButton.style.border = "1px solid #666";
+                clearButton.style.borderRadius = "3px";
+                clearButton.style.cursor = "pointer";
+                clearButton.style.fontSize = "11px";
+                clearButton.onclick = () => {
+                    const ctx = this.canvasElement.getContext("2d");
+                    ctx.fillStyle = "#ffffff";
+                    ctx.fillRect(0, 0, this.canvasElement.width, this.canvasElement.height);
+                };
+
+                canvasContainer.appendChild(this.ratioLabel);
+                canvasContainer.appendChild(this.canvasElement);
+                canvasContainer.appendChild(clearButton);
+
+                // Add to node
+                this.addDOMWidget("canvas", "customcanvas", canvasContainer);
+
+                // Listen for aspect ratio changes - MORE ROBUST
+                if (aspectRatioWidget) {
+                    // Store reference to node
+                    const node = this;
+
+                    // Override the widget value setter
+                    Object.defineProperty(aspectRatioWidget, 'value', {
+                        get: function() {
+                            return this._value;
+                        },
+                        set: function(v) {
+                            const oldValue = this._value;
+                            this._value = v;
+
+                            // Update canvas when value changes
+                            if (oldValue !== v) {
+                                console.log(`CBCanvas: Slider changed from ${oldValue} to ${v}`);
+                                updateCanvasSize(node, v);
+                            }
+
+                            // Call original callback if exists
+                            if (this._original_callback) {
+                                this._original_callback.call(this, v);
+                            }
+                        }
+                    });
+
+                    // Initialize value
+                    aspectRatioWidget._value = initialRatio;
+                    aspectRatioWidget._original_callback = aspectRatioWidget.callback;
+
+                    // Also hook callback for safety
+                    aspectRatioWidget.callback = function(v) {
+                        updateCanvasSize(node, v);
+                        if (this._original_callback) {
+                            this._original_callback.call(this, v);
+                        }
+                    };
+                }
+
+                console.log(`CBCanvas: Node created successfully`);
+                return result;
+            };
+
+            // Handle node removal
+            const onRemoved = nodeType.prototype.onRemoved;
+            nodeType.prototype.onRemoved = function () {
+                if (canvasInstances[this.id]) {
+                    delete canvasInstances[this.id];
+                }
+                return onRemoved?.apply(this, arguments);
+            };
+
+            // Handle node serialization
+            const onSerialize = nodeType.prototype.onSerialize;
+            nodeType.prototype.onSerialize = function (o) {
+                const result = onSerialize?.apply(this, arguments);
+
+                // Save canvas data
+                if (this.canvasElement) {
+                    o.canvas_data = this.canvasElement.toDataURL();
+                }
+
+                return result;
+            };
+
+            // Handle node deserialization
+            const onConfigure = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function (o) {
+                const result = onConfigure?.apply(this, arguments);
+
+                // Restore canvas data
+                if (o.canvas_data && this.canvasElement) {
+                    const img = new Image();
+                    img.onload = () => {
+                        const ctx = this.canvasElement.getContext("2d");
+                        ctx.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height);
+                        ctx.drawImage(img, 0, 0, this.canvasElement.width, this.canvasElement.height);
+                    };
+                    img.src = o.canvas_data;
+                }
+
+                return result;
+            };
+        }
+    }
+});
+
+console.log("CBCanvas: Extension loaded");

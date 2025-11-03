@@ -1,0 +1,177 @@
+/**
+ * CBCanvas Enhanced Styles
+ */
+
+.cbcanvas-enhanced-container {
+    background-color: #2a2a2a;
+    border-radius: 4px;
+    padding: 10px;
+    margin-top: 5px;
+}
+
+/* Toolbar */
+.cbcanvas-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 10px;
+    background-color: #1a1a1a;
+    border-radius: 4px;
+    margin-bottom: 10px;
+    align-items: center;
+}
+
+.cbcanvas-tool-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 12px;
+    background-color: #333;
+    color: #fff;
+    border: 2px solid #444;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    transition: all 0.2s;
+    min-width: 60px;
+}
+
+.cbcanvas-tool-btn span {
+    font-size: 9px;
+    margin-top: 4px;
+    font-weight: normal;
+}
+
+.cbcanvas-tool-btn:hover {
+    background-color: #444;
+    border-color: #555;
+}
+
+.cbcanvas-tool-btn.active {
+    background-color: #4a9eff;
+    border-color: #6bb3ff;
+}
+
+/* Controls */
+.cbcanvas-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    background-color: #333;
+    border-radius: 4px;
+}
+
+.cbcanvas-control label {
+    color: #fff;
+    font-size: 11px;
+    font-family: monospace;
+    white-space: nowrap;
+}
+
+.cbcanvas-slider {
+    width: 100px;
+    height: 6px;
+    background: #555;
+    border-radius: 3px;
+    outline: none;
+    -webkit-appearance: none;
+}
+
+.cbcanvas-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: #4a9eff;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.cbcanvas-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: #4a9eff;
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+}
+
+.cbcanvas-color-picker {
+    width: 40px;
+    height: 30px;
+    border: 2px solid #555;
+    border-radius: 4px;
+    cursor: pointer;
+    background: none;
+}
+
+/* Canvas wrapper */
+.cbcanvas-canvas-wrapper {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #3a3a3a;
+    border-radius: 4px;
+    padding: 15px;
+    margin: 0 auto 10px;
+    overflow: hidden;
+    width: fit-content;
+    max-width: 100%;
+}
+
+/* Fabric.js canvas container */
+.cbcanvas-canvas-wrapper .canvas-container {
+    margin: 0 !important;
+}
+
+.cbcanvas-canvas-wrapper canvas {
+    border: 2px solid #666;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    display: block;
+}
+
+/* Info label */
+.cbcanvas-info-label {
+    color: #aaa;
+    font-size: 10px;
+    font-family: monospace;
+    text-align: center;
+    margin-bottom: 8px;
+}
+
+/* Upload button */
+.cbcanvas-upload-btn {
+    width: 100%;
+    padding: 8px;
+    background-color: #444;
+    color: #fff;
+    border: 1px solid #666;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background-color 0.2s;
+}
+
+.cbcanvas-upload-btn:hover {
+    background-color: #555;
+}
+
+/* Fabric.js canvas container - force proper sizing */
+.cbcanvas-enhanced-container .canvas-container {
+    margin: 0 !important;
+    position: relative !important;
+}
+
+/* Selection handles */
+.cbcanvas-enhanced-container .upper-canvas {
+    cursor: crosshair !important;
+}
+
+/* Prevent wrapper overflow */
+.cbcanvas-enhanced-container .canvas-container canvas {
+    max-width: 100% !important;
+    height: auto !important;
+}

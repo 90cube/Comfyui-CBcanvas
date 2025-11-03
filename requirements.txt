@@ -1,0 +1,3 @@
+# CBCanvas core dependencies (torch, pillow, numpy, aiohttp) ship with ComfyUI.
+# Additional translation nodes (e.g. ArgosTranslateNode) require argostranslate.
+argostranslate==1.9.6
