@@ -644,23 +644,8 @@ function initializeFabricCanvas(canvasElement, width, height, node) {
     // Initialize history manager
     node.historyManager = new HistoryManager(fabricCanvas);
 
-    // Add keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-        // Ctrl+Z for undo
-        if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
-            e.preventDefault();
-            if (node.historyManager) {
-                node.historyManager.undo();
-            }
-        }
-        // Ctrl+Y or Ctrl+Shift+Z for redo
-        if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) {
-            e.preventDefault();
-            if (node.historyManager) {
-                node.historyManager.redo();
-            }
-        }
-    });
+    // Note: Keyboard shortcuts removed to avoid conflicts with ComfyUI
+    // Use toolbar buttons for Undo/Redo instead
 
     return fabricCanvas;
 }
