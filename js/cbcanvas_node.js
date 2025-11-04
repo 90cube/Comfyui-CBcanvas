@@ -502,8 +502,9 @@ function createToolbar(node) {
     const actionTools = [
         { id: "undo", icon: "↶", label: "Undo" },
         { id: "redo", icon: "↷", label: "Redo" },
-        { id: "clear", icon: "🗑️", label: "Clear Layer" },
-        { id: "newlayer", icon: "➕", label: "New Layer" }
+        { id: "clear", icon: "🗑️", label: "Clear" },
+        { id: "newlayer", icon: "➕", label: "Layer" },
+        { id: "loadimage", icon: "📁", label: "Image" }
     ];
 
     // Create tool rows
@@ -544,26 +545,45 @@ function createToolbar(node) {
 
         btn.onclick = () => {
             if (tool.id === "clear") {
-                if (confirm("Clear active layer?")) {
-                    const layer = node.layerManager.getActiveLayer();
-                    if (layer) {
-                        layer.clear();
-                        node.layerManager.updateComposite();
-                        node.historyManager.saveState();
-                    }
+                const layer = node.layerManager.getActiveLayer();
+                if (layer) {
+                    layer.clear();
+                    node.layerManager.updateComposite();
+                    node.historyManager.saveState();
                 }
             } else if (tool.id === "undo") {
                 if (node.historyManager) {
                     node.historyManager.undo();
+                    updateLayerPanel(node);
                 }
             } else if (tool.id === "redo") {
                 if (node.historyManager) {
                     node.historyManager.redo();
+                    updateLayerPanel(node);
                 }
             } else if (tool.id === "newlayer") {
-                node.layerManager.addLayer();
-                node.historyManager.saveState();
-                updateLayerPanel(node);
+                console.log("New Layer clicked, LayerManager:", node.layerManager);
+                if (node.layerManager) {
+                    const newLayer = node.layerManager.addLayer(`Layer ${node.layerManager.layers.length + 1}`);
+                    console.log("New layer created:", newLayer, "Total layers:", node.layerManager.layers.length);
+                    node.historyManager.saveState();
+                    updateLayerPanel(node);
+                }
+            } else if (tool.id === "loadimage") {
+                const input = document.createElement("input");
+                input.type = "file";
+                input.accept = "image/*";
+                input.onchange = (e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                            addImageToCanvas(node, event.target.result);
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                };
+                input.click();
             }
         };
 
@@ -703,13 +723,18 @@ function createLayerPanel(node) {
  * Update layer panel
  */
 function updateLayerPanel(node) {
+    console.log("updateLayerPanel called for node:", node.id);
     const layerList = document.getElementById(`layerlist-${node.id}`);
-    if (!layerList) return;
+    if (!layerList) {
+        console.error("Layer list element not found!");
+        return;
+    }
 
     layerList.innerHTML = '';
 
     // Reverse order - show top layer first
     const layers = [...node.layerManager.layers].reverse();
+    console.log("Updating layer panel with", layers.length, "layers");
     layers.forEach((layer, reverseIndex) => {
         const index = layers.length - 1 - reverseIndex;
         const isActive = index === node.layerManager.activeLayerIndex;
@@ -920,12 +945,6 @@ function resizeCanvas(node, width, height) {
 
     // Update composite
     node.layerManager.updateComposite();
-
-    // Update info label
-    if (node.ratioLabel) {
-        const { info: ratioInfo } = resolveAspectRatio(node.currentRatio ?? 0);
-        node.ratioLabel.textContent = `Ratio: ${ratioInfo.ratio} (${width}x${height}) - Display: ${displayWidth}x${displayHeight}`;
-    }
 }
 
 /**
@@ -1061,35 +1080,6 @@ app.registerExtension({
 
                 container.appendChild(contentArea);
 
-                // Create info label
-                this.ratioLabel = document.createElement("div");
-                this.ratioLabel.className = "cbcanvas-info-label";
-                this.ratioLabel.textContent = `Ratio: ${initialInfo.ratio} (${initialInfo.width}x${initialInfo.height}) - Display: ${displayWidth}x${displayHeight}`;
-
-                // Add image upload button
-                const uploadBtn = document.createElement("button");
-                uploadBtn.className = "cbcanvas-upload-btn";
-                uploadBtn.textContent = "📁 Add Image to Layer";
-                uploadBtn.onclick = () => {
-                    const input = document.createElement("input");
-                    input.type = "file";
-                    input.accept = "image/*";
-                    input.onchange = (e) => {
-                        const file = e.target.files[0];
-                        if (file) {
-                            const reader = new FileReader();
-                            reader.onload = (event) => {
-                                addImageToCanvas(this, event.target.result);
-                            };
-                            reader.readAsDataURL(file);
-                        }
-                    };
-                    input.click();
-                };
-
-                container.appendChild(this.ratioLabel);
-                container.appendChild(uploadBtn);
-
                 // Add to node
                 this.addDOMWidget("canvas", "layercanvas", container);
 
@@ -1161,6 +1151,26 @@ app.registerExtension({
 
                     aspectRatioWidget._value = initialValue;
                     aspectRatioWidget._original_callback = aspectRatioWidget.callback;
+                }
+
+                // Load initial image to canvas if 'image' widget has a value
+                const imageWidget = this.widgets?.find(w => w.name === "image");
+                if (imageWidget && imageWidget.value) {
+                    // Wait a bit for everything to initialize
+                    setTimeout(() => {
+                        const imagePath = `/view?filename=${imageWidget.value}&type=input`;
+                        fetch(imagePath)
+                            .then(response => response.blob())
+                            .then(blob => {
+                                const reader = new FileReader();
+                                reader.onload = (e) => {
+                                    addImageToCanvas(this, e.target.result);
+                                    console.log("CBCanvas: Initial image loaded to canvas");
+                                };
+                                reader.readAsDataURL(blob);
+                            })
+                            .catch(err => console.error("CBCanvas: Failed to load initial image:", err));
+                    }, 500);
                 }
 
                 console.log("CBCanvas Enhanced: Layer system initialized");

@@ -230,7 +230,10 @@ class CBCanvasNode:
                     },
                 ),
             },
-            "hidden": {"unique_id": "UNIQUE_ID"},
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+                "canvas_data": "STRING"
+            },
             "optional": {
                 "input_image": ("IMAGE",),
                 "update_canvas": ("BOOLEAN", {"default": True}),
@@ -269,7 +272,7 @@ Aspect Ratio Slider (-6 to +6):
         self.canvas_set = False
 
     def execute(
-        self, image, aspect_ratio_slider, unique_id, input_image=None, update_canvas=True
+        self, image, aspect_ratio_slider, unique_id, canvas_data="", input_image=None, update_canvas=True
     ):
         # Register instance
         if unique_id not in CBCANVAS_DICT:
@@ -311,11 +314,13 @@ Aspect Ratio Slider (-6 to +6):
             else:
                 print(f"CBCanvas_{unique_id}: Image sent to canvas successfully!")
 
-        # Check if we have canvas data from JavaScript
-        if hasattr(self, 'canvas_data') and self.canvas_data:
+        # Check if we have canvas data (from widget or API)
+        final_canvas_data = canvas_data or (hasattr(self, 'canvas_data') and self.canvas_data) or None
+
+        if final_canvas_data:
             try:
                 # Decode base64 canvas image
-                canvas_data_str = self.canvas_data.split(',')[1] if ',' in self.canvas_data else self.canvas_data
+                canvas_data_str = final_canvas_data.split(',')[1] if ',' in final_canvas_data else final_canvas_data
                 canvas_bytes = base64.b64decode(canvas_data_str)
                 canvas_img = Image.open(BytesIO(canvas_bytes))
 
@@ -391,19 +396,26 @@ Aspect Ratio Slider (-6 to +6):
 
     @classmethod
     def IS_CHANGED(
-        cls, image, aspect_ratio_slider, unique_id, input_image=None, update_canvas=True
+        cls, image, aspect_ratio_slider, unique_id, canvas_data="", input_image=None, update_canvas=True
     ):
-        # Force update when aspect ratio or image changes
-        image_path = folder_paths.get_annotated_filepath(image)
+        # Force update when canvas data, aspect ratio, or image changes
         m = hashlib.sha256()
-        with open(image_path, "rb") as f:
-            m.update(f.read())
+
+        # Include canvas data if present
+        if canvas_data:
+            m.update(canvas_data.encode())
+        else:
+            # Fallback to image file hash
+            image_path = folder_paths.get_annotated_filepath(image)
+            with open(image_path, "rb") as f:
+                m.update(f.read())
+
         m.update(str(aspect_ratio_slider).encode())
         return m.digest().hex()
 
     @classmethod
     def VALIDATE_INPUTS(
-        cls, image, aspect_ratio_slider, unique_id, input_image=None, update_canvas=True
+        cls, image, aspect_ratio_slider, unique_id, canvas_data="", input_image=None, update_canvas=True
     ):
         if not folder_paths.exists_annotated_filepath(image):
             return f"Invalid image file: {image}"
