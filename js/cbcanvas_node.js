@@ -1,6 +1,6 @@
 /**
- * CBCanvas Node Enhanced - Professional Drawing Tool with Wacom Support
- * Features: Pen Pressure, Brush, Eraser, Shapes, Undo/Redo, Opacity, Color Palette
+ * CBCanvas Node Enhanced - Layer-based Drawing System with Wacom Support
+ * Features: Photoshop-like Layers, Pen Pressure, Brush, Eraser, Shapes, Undo/Redo
  */
 
 import { app } from "../../scripts/app.js";
@@ -43,6 +43,373 @@ const DEFAULT_COLORS = [
 ];
 
 /**
+ * Layer Class - Photoshop-like layer with raster canvas
+ */
+class Layer {
+    constructor(width, height, name = "Layer") {
+        this.id = Date.now() + Math.random();
+        this.name = name;
+        this.visible = true;
+        this.opacity = 1.0;
+        this.locked = false;
+
+        // Create offscreen canvas for this layer
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = width;
+        this.canvas.height = height;
+        this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+
+        // Initialize with transparent background
+        this.ctx.clearRect(0, 0, width, height);
+
+        // Fabric.js image representation (for display only)
+        this.fabricImage = null;
+    }
+
+    /**
+     * Draw on this layer's canvas
+     */
+    drawStroke(points, color, width, pressureSensitivity = 1.0) {
+        if (points.length < 2) return;
+
+        const ctx = this.ctx;
+        ctx.strokeStyle = color;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.globalCompositeOperation = 'source-over';
+
+        // Draw each segment with pressure-sensitive width
+        for (let i = 1; i < points.length; i++) {
+            const p1 = points[i - 1];
+            const p2 = points[i];
+
+            const pressure1 = Math.pow(p1.pressure || 1.0, 1 / pressureSensitivity);
+            const pressure2 = Math.pow(p2.pressure || 1.0, 1 / pressureSensitivity);
+            const avgPressure = (pressure1 + pressure2) / 2;
+            const strokeWidth = Math.max(1, width * avgPressure);
+
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.lineWidth = strokeWidth;
+            ctx.stroke();
+        }
+    }
+
+    /**
+     * Erase on this layer's canvas
+     */
+    erase(points, width) {
+        if (points.length < 2) return;
+
+        const ctx = this.ctx;
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        for (let i = 1; i < points.length; i++) {
+            const p1 = points[i - 1];
+            const p2 = points[i];
+
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.lineWidth = width;
+            ctx.stroke();
+        }
+
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    /**
+     * Clear this layer
+     */
+    clear() {
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    }
+
+    /**
+     * Get layer data as image data URL
+     */
+    toDataURL() {
+        return this.canvas.toDataURL('image/png');
+    }
+
+    /**
+     * Load from data URL
+     */
+    fromDataURL(dataURL, callback) {
+        const img = new Image();
+        img.onload = () => {
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            this.ctx.drawImage(img, 0, 0);
+            if (callback) callback();
+        };
+        img.src = dataURL;
+    }
+
+    /**
+     * Resize layer canvas
+     */
+    resize(width, height) {
+        const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+        this.canvas.width = width;
+        this.canvas.height = height;
+        this.ctx.putImageData(imageData, 0, 0);
+    }
+}
+
+/**
+ * Layer Manager - Manages multiple layers and compositing
+ */
+class LayerManager {
+    constructor(fabricCanvas) {
+        this.fabricCanvas = fabricCanvas;
+        this.layers = [];
+        this.activeLayerIndex = -1;
+
+        // Create default layer
+        this.addLayer("Background");
+    }
+
+    /**
+     * Add new layer
+     */
+    addLayer(name = "Layer") {
+        const layer = new Layer(
+            this.fabricCanvas.width,
+            this.fabricCanvas.height,
+            name || `Layer ${this.layers.length + 1}`
+        );
+        this.layers.push(layer);
+        this.activeLayerIndex = this.layers.length - 1;
+        this.updateComposite();
+        return layer;
+    }
+
+    /**
+     * Get active layer
+     */
+    getActiveLayer() {
+        return this.layers[this.activeLayerIndex];
+    }
+
+    /**
+     * Set active layer by index
+     */
+    setActiveLayer(index) {
+        if (index >= 0 && index < this.layers.length) {
+            this.activeLayerIndex = index;
+        }
+    }
+
+    /**
+     * Delete layer
+     */
+    deleteLayer(index) {
+        if (this.layers.length <= 1) return; // Keep at least one layer
+
+        this.layers.splice(index, 1);
+        if (this.activeLayerIndex >= this.layers.length) {
+            this.activeLayerIndex = this.layers.length - 1;
+        }
+        this.updateComposite();
+    }
+
+    /**
+     * Toggle layer visibility
+     */
+    toggleLayerVisibility(index) {
+        if (index >= 0 && index < this.layers.length) {
+            this.layers[index].visible = !this.layers[index].visible;
+            this.updateComposite();
+        }
+    }
+
+    /**
+     * Merge layer down
+     */
+    mergeDown(index) {
+        if (index <= 0 || index >= this.layers.length) return;
+
+        const upperLayer = this.layers[index];
+        const lowerLayer = this.layers[index - 1];
+
+        // Draw upper layer onto lower layer
+        lowerLayer.ctx.globalAlpha = upperLayer.opacity;
+        lowerLayer.ctx.drawImage(upperLayer.canvas, 0, 0);
+        lowerLayer.ctx.globalAlpha = 1.0;
+
+        // Remove upper layer
+        this.deleteLayer(index);
+    }
+
+    /**
+     * Update composite - combine all layers to fabric canvas
+     */
+    updateComposite() {
+        // Clear fabric canvas
+        this.fabricCanvas.clear();
+        this.fabricCanvas.backgroundColor = "#ffffff";
+
+        // Composite all visible layers
+        const compositeCanvas = document.createElement('canvas');
+        compositeCanvas.width = this.fabricCanvas.width;
+        compositeCanvas.height = this.fabricCanvas.height;
+        const compositeCtx = compositeCanvas.getContext('2d');
+
+        // Draw white background
+        compositeCtx.fillStyle = '#ffffff';
+        compositeCtx.fillRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+
+        // Draw each visible layer
+        for (const layer of this.layers) {
+            if (layer.visible) {
+                compositeCtx.globalAlpha = layer.opacity;
+                compositeCtx.drawImage(layer.canvas, 0, 0);
+            }
+        }
+        compositeCtx.globalAlpha = 1.0;
+
+        // Convert to fabric image
+        const dataURL = compositeCanvas.toDataURL('image/png');
+        fabric.Image.fromURL(dataURL, (img) => {
+            img.set({
+                left: 0,
+                top: 0,
+                selectable: false,
+                evented: false,
+                hasControls: false,
+                hasBorders: false
+            });
+            this.fabricCanvas.add(img);
+            this.fabricCanvas.renderAll();
+        }, { crossOrigin: 'anonymous' });
+    }
+
+    /**
+     * Resize all layers
+     */
+    resizeAll(width, height) {
+        for (const layer of this.layers) {
+            layer.resize(width, height);
+        }
+    }
+
+    /**
+     * Export all layers as JSON
+     */
+    toJSON() {
+        return {
+            layers: this.layers.map(layer => ({
+                id: layer.id,
+                name: layer.name,
+                visible: layer.visible,
+                opacity: layer.opacity,
+                locked: layer.locked,
+                data: layer.toDataURL()
+            })),
+            activeLayerIndex: this.activeLayerIndex
+        };
+    }
+
+    /**
+     * Load from JSON
+     */
+    fromJSON(json, callback) {
+        this.layers = [];
+        this.activeLayerIndex = json.activeLayerIndex || 0;
+
+        let loadedCount = 0;
+        const totalLayers = json.layers.length;
+
+        json.layers.forEach((layerData, index) => {
+            const layer = new Layer(
+                this.fabricCanvas.width,
+                this.fabricCanvas.height,
+                layerData.name
+            );
+            layer.id = layerData.id;
+            layer.visible = layerData.visible;
+            layer.opacity = layerData.opacity;
+            layer.locked = layerData.locked;
+
+            layer.fromDataURL(layerData.data, () => {
+                loadedCount++;
+                if (loadedCount === totalLayers) {
+                    this.updateComposite();
+                    if (callback) callback();
+                }
+            });
+
+            this.layers.push(layer);
+        });
+    }
+}
+
+/**
+ * History Manager for Undo/Redo with Layer Support
+ */
+class HistoryManager {
+    constructor(layerManager, maxStates = 20) {
+        this.layerManager = layerManager;
+        this.maxStates = maxStates;
+        this.states = [];
+        this.currentIndex = -1;
+        this.isRestoring = false;
+
+        // Save initial state
+        this.saveState();
+    }
+
+    saveState() {
+        if (this.isRestoring) return;
+
+        // Remove any states after current index
+        if (this.currentIndex < this.states.length - 1) {
+            this.states = this.states.slice(0, this.currentIndex + 1);
+        }
+
+        // Save current state
+        const state = JSON.stringify(this.layerManager.toJSON());
+        this.states.push(state);
+
+        // Limit history size
+        if (this.states.length > this.maxStates) {
+            this.states.shift();
+        } else {
+            this.currentIndex++;
+        }
+    }
+
+    undo() {
+        if (this.currentIndex > 0) {
+            this.currentIndex--;
+            this.restoreState();
+            return true;
+        }
+        return false;
+    }
+
+    redo() {
+        if (this.currentIndex < this.states.length - 1) {
+            this.currentIndex++;
+            this.restoreState();
+            return true;
+        }
+        return false;
+    }
+
+    restoreState() {
+        this.isRestoring = true;
+        const state = JSON.parse(this.states[this.currentIndex]);
+        this.layerManager.fromJSON(state, () => {
+            this.isRestoring = false;
+        });
+    }
+}
+
+/**
  * Resolve aspect ratio key/info safely
  */
 function resolveAspectRatio(value) {
@@ -83,192 +450,13 @@ function calculateDisplaySize(width, height, maxSize) {
 }
 
 /**
- * History Manager for Undo/Redo
+ * Convert hex color to rgba
  */
-class HistoryManager {
-    constructor(canvas, maxStates = 20) {
-        this.canvas = canvas;
-        this.maxStates = maxStates;
-        this.states = [];
-        this.currentIndex = -1;
-        this.isRestoring = false;
-
-        // Save initial state
-        this.saveState();
-
-        // Listen to canvas modifications
-        this.canvas.on('object:added', () => this.onCanvasModified());
-        this.canvas.on('object:modified', () => this.onCanvasModified());
-        this.canvas.on('object:removed', () => this.onCanvasModified());
-    }
-
-    onCanvasModified() {
-        if (!this.isRestoring) {
-            this.saveState();
-        }
-    }
-
-    saveState() {
-        // Remove any states after current index
-        if (this.currentIndex < this.states.length - 1) {
-            this.states = this.states.slice(0, this.currentIndex + 1);
-        }
-
-        // Save current state
-        const json = JSON.stringify(this.canvas.toJSON());
-        this.states.push(json);
-
-        // Limit history size
-        if (this.states.length > this.maxStates) {
-            this.states.shift();
-        } else {
-            this.currentIndex++;
-        }
-    }
-
-    undo() {
-        if (this.currentIndex > 0) {
-            this.currentIndex--;
-            this.restoreState();
-            return true;
-        }
-        return false;
-    }
-
-    redo() {
-        if (this.currentIndex < this.states.length - 1) {
-            this.currentIndex++;
-            this.restoreState();
-            return true;
-        }
-        return false;
-    }
-
-    restoreState() {
-        this.isRestoring = true;
-        const state = this.states[this.currentIndex];
-        this.canvas.loadFromJSON(JSON.parse(state), () => {
-            this.canvas.renderAll();
-            this.isRestoring = false;
-        });
-    }
-
-    canUndo() {
-        return this.currentIndex > 0;
-    }
-
-    canRedo() {
-        return this.currentIndex < this.states.length - 1;
-    }
-}
-
-/**
- * Pressure Sensitive Brush for Wacom Tablets
- */
-class PressureSensitiveBrush extends fabric.PencilBrush {
-    constructor(canvas) {
-        super(canvas);
-        this.pressureSensitivity = 1.0; // 0.0 to 2.0
-        this.baseWidth = 5;
-        this.points = [];
-        this._isDrawing = false;
-    }
-
-    onMouseDown(pointer, options) {
-        if (!this.canvas._isCurrentlyDrawing) {
-            this.canvas._isCurrentlyDrawing = true;
-        }
-        this._isDrawing = true;
-        this.points = [];
-
-        const pressure = options.e.pressure || 1.0;
-        const point = { x: pointer.x, y: pointer.y, pressure: pressure };
-        this.points.push(point);
-
-        this.canvas.contextTop.strokeStyle = this.color;
-        this.canvas.contextTop.lineCap = 'round';
-        this.canvas.contextTop.lineJoin = 'round';
-    }
-
-    onMouseMove(pointer, options) {
-        if (!this._isDrawing) return;
-
-        const pressure = options.e.pressure || 1.0;
-        const point = { x: pointer.x, y: pointer.y, pressure: pressure };
-        this.points.push(point);
-
-        if (this.points.length > 1) {
-            const p1 = this.points[this.points.length - 2];
-            const p2 = this.points[this.points.length - 1];
-            this.drawSegment(p1, p2);
-        }
-
-        this.canvas.renderTop();
-    }
-
-    onMouseUp(options) {
-        if (!this._isDrawing) return;
-        this._isDrawing = false;
-        this.canvas._isCurrentlyDrawing = false;
-
-        // Convert the pressure-sensitive drawing to a path
-        this.convertToPath();
-        this.points = [];
-    }
-
-    drawSegment(p1, p2) {
-        const ctx = this.canvas.contextTop;
-        const width1 = this.calculateWidth(p1.pressure);
-        const width2 = this.calculateWidth(p2.pressure);
-        const avgWidth = (width1 + width2) / 2;
-
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.lineWidth = avgWidth;
-        ctx.stroke();
-    }
-
-    calculateWidth(pressure) {
-        // Apply pressure sensitivity curve
-        const adjustedPressure = Math.pow(pressure, 1 / this.pressureSensitivity);
-        return Math.max(1, this.baseWidth * adjustedPressure);
-    }
-
-    convertToPath() {
-        if (this.points.length < 2) return;
-
-        // Create a smooth path from points
-        let pathData = `M ${this.points[0].x} ${this.points[0].y}`;
-
-        for (let i = 1; i < this.points.length; i++) {
-            const xc = (this.points[i].x + this.points[i - 1].x) / 2;
-            const yc = (this.points[i].y + this.points[i - 1].y) / 2;
-            pathData += ` Q ${this.points[i - 1].x} ${this.points[i - 1].y} ${xc} ${yc}`;
-        }
-
-        // Add last point
-        const lastPoint = this.points[this.points.length - 1];
-        pathData += ` L ${lastPoint.x} ${lastPoint.y}`;
-
-        // Calculate average width from all pressures
-        const avgPressure = this.points.reduce((sum, p) => sum + p.pressure, 0) / this.points.length;
-        const avgWidth = this.calculateWidth(avgPressure);
-
-        const path = new fabric.Path(pathData, {
-            fill: null,
-            stroke: this.color,
-            strokeWidth: avgWidth,
-            strokeLinecap: 'round',
-            strokeLinejoin: 'round',
-            selectable: false,
-            evented: false
-        });
-
-        this.canvas.add(path);
-        this.canvas.clearContext(this.canvas.contextTop);
-        this.canvas.renderAll();
-    }
+function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 /**
@@ -284,24 +472,23 @@ function createToolbar(node) {
     node.brushColor = "#000000";
     node.brushOpacity = 1.0;
     node.pressureSensitivity = 1.0;
-    node.pressureEnabled = true;
     node.colorPalette = [...DEFAULT_COLORS];
+    node.isDrawing = false;
+    node.currentStroke = [];
 
     // Tool buttons - Row 1: Drawing Tools
     const tools = [
-        { id: "brush", icon: "✏️", label: "Brush", row: 1 },
-        { id: "eraser", icon: "🧹", label: "Eraser", row: 1 },
-        { id: "line", icon: "📏", label: "Line", row: 1 },
-        { id: "circle", icon: "⭕", label: "Circle", row: 1 },
-        { id: "rectangle", icon: "▭", label: "Rectangle", row: 1 },
-        { id: "select", icon: "↖️", label: "Select", row: 1 }
+        { id: "brush", icon: "✏️", label: "Brush" },
+        { id: "eraser", icon: "🧹", label: "Eraser" },
+        { id: "select", icon: "↖️", label: "Select" }
     ];
 
     // Row 2: Action Tools
     const actionTools = [
-        { id: "undo", icon: "↶", label: "Undo", row: 2 },
-        { id: "redo", icon: "↷", label: "Redo", row: 2 },
-        { id: "clear", icon: "🗑️", label: "Clear", row: 2 }
+        { id: "undo", icon: "↶", label: "Undo" },
+        { id: "redo", icon: "↷", label: "Redo" },
+        { id: "clear", icon: "🗑️", label: "Clear Layer" },
+        { id: "newlayer", icon: "➕", label: "New Layer" }
     ];
 
     // Create tool rows
@@ -339,15 +526,14 @@ function createToolbar(node) {
         btn.className = "cbcanvas-tool-btn";
         btn.title = tool.label;
         btn.innerHTML = `${tool.icon}<br><span>${tool.label}</span>`;
-        btn.dataset.action = tool.id;
 
         btn.onclick = () => {
             if (tool.id === "clear") {
-                if (confirm("Clear all canvas content?")) {
-                    node.fabricCanvas.clear();
-                    node.fabricCanvas.backgroundColor = "#ffffff";
-                    node.fabricCanvas.renderAll();
-                    if (node.historyManager) {
+                if (confirm("Clear active layer?")) {
+                    const layer = node.layerManager.getActiveLayer();
+                    if (layer) {
+                        layer.clear();
+                        node.layerManager.updateComposite();
                         node.historyManager.saveState();
                     }
                 }
@@ -359,6 +545,10 @@ function createToolbar(node) {
                 if (node.historyManager) {
                     node.historyManager.redo();
                 }
+            } else if (tool.id === "newlayer") {
+                node.layerManager.addLayer();
+                node.historyManager.saveState();
+                updateLayerPanel(node);
             }
         };
 
@@ -384,8 +574,6 @@ function createToolbar(node) {
     sizeSlider.oninput = (e) => {
         node.brushSize = parseInt(e.target.value);
         document.getElementById(`brushsize-${node.id}`).textContent = node.brushSize;
-        updateBrushSettings(node);
-        updateBrushCursor(node);
     };
     controlsRow.appendChild(sizeControl);
 
@@ -401,7 +589,6 @@ function createToolbar(node) {
     opacitySlider.oninput = (e) => {
         node.brushOpacity = parseInt(e.target.value) / 100;
         document.getElementById(`brushopacity-${node.id}`).textContent = Math.round(node.brushOpacity * 100) + "%";
-        updateBrushSettings(node);
     };
     controlsRow.appendChild(opacityControl);
 
@@ -417,7 +604,6 @@ function createToolbar(node) {
     pressureSlider.oninput = (e) => {
         node.pressureSensitivity = parseInt(e.target.value) / 100;
         document.getElementById(`pressure-${node.id}`).textContent = Math.round(node.pressureSensitivity * 100) + "%";
-        updateBrushSettings(node);
     };
     controlsRow.appendChild(pressureControl);
 
@@ -432,8 +618,6 @@ function createToolbar(node) {
     const colorPicker = colorControl.querySelector("input");
     colorPicker.oninput = (e) => {
         node.brushColor = e.target.value;
-        updateBrushSettings(node);
-        updateBrushCursor(node);
     };
     controlsRow.appendChild(colorControl);
 
@@ -455,8 +639,6 @@ function createToolbar(node) {
         colorBtn.onclick = () => {
             node.brushColor = color;
             colorPicker.value = color;
-            updateBrushSettings(node);
-            updateBrushCursor(node);
         };
         paletteContainer.appendChild(colorBtn);
     });
@@ -468,330 +650,170 @@ function createToolbar(node) {
 }
 
 /**
+ * Create layer panel UI
+ */
+function createLayerPanel(node) {
+    const panel = document.createElement("div");
+    panel.className = "cbcanvas-layer-panel";
+    panel.id = `layerpanel-${node.id}`;
+
+    const header = document.createElement("div");
+    header.className = "cbcanvas-layer-header";
+    header.textContent = "Layers";
+    panel.appendChild(header);
+
+    const layerList = document.createElement("div");
+    layerList.className = "cbcanvas-layer-list";
+    layerList.id = `layerlist-${node.id}`;
+    panel.appendChild(layerList);
+
+    return panel;
+}
+
+/**
+ * Update layer panel
+ */
+function updateLayerPanel(node) {
+    const layerList = document.getElementById(`layerlist-${node.id}`);
+    if (!layerList) return;
+
+    layerList.innerHTML = '';
+
+    // Reverse order - show top layer first
+    const layers = [...node.layerManager.layers].reverse();
+    layers.forEach((layer, reverseIndex) => {
+        const index = layers.length - 1 - reverseIndex;
+        const isActive = index === node.layerManager.activeLayerIndex;
+
+        const layerItem = document.createElement("div");
+        layerItem.className = `cbcanvas-layer-item ${isActive ? 'active' : ''}`;
+
+        const visBtn = document.createElement("button");
+        visBtn.className = "cbcanvas-layer-vis-btn";
+        visBtn.textContent = layer.visible ? "👁" : "🚫";
+        visBtn.onclick = () => {
+            node.layerManager.toggleLayerVisibility(index);
+            updateLayerPanel(node);
+        };
+
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = layer.name;
+        nameSpan.onclick = () => {
+            node.layerManager.setActiveLayer(index);
+            updateLayerPanel(node);
+        };
+
+        const delBtn = document.createElement("button");
+        delBtn.className = "cbcanvas-layer-del-btn";
+        delBtn.textContent = "🗑";
+        delBtn.onclick = () => {
+            if (node.layerManager.layers.length > 1) {
+                node.layerManager.deleteLayer(index);
+                node.historyManager.saveState();
+                updateLayerPanel(node);
+            }
+        };
+
+        layerItem.appendChild(visBtn);
+        layerItem.appendChild(nameSpan);
+        layerItem.appendChild(delBtn);
+        layerList.appendChild(layerItem);
+    });
+}
+
+/**
  * Update canvas mode based on current tool
  */
 function updateCanvasMode(node) {
+    // Just update the cursor, actual drawing is handled by mouse events
     const canvas = node.fabricCanvas;
 
-    // Store current tool
-    canvas._currentTool = node.currentTool;
-
-    // Disable drawing mode first
-    canvas.isDrawingMode = false;
-
-    // Disable any active shape drawing
-    if (node.shapeDrawing) {
-        node.shapeDrawing.isDrawing = false;
-        node.shapeDrawing.shape = null;
-    }
-
-    switch (node.currentTool) {
-        case "brush":
-            setupBrushMode(node);
-            break;
-
-        case "eraser":
-            setupEraserMode(node);
-            break;
-
-        case "line":
-        case "circle":
-        case "rectangle":
-            setupShapeMode(node);
-            break;
-
-        case "select":
-            setupSelectMode(node);
-            break;
-    }
-
-    canvas.renderAll();
-    updateBrushCursor(node);
-}
-
-/**
- * Setup brush mode with pressure sensitivity
- */
-function setupBrushMode(node) {
-    const canvas = node.fabricCanvas;
-
-    // Use pressure-sensitive brush
-    canvas.freeDrawingBrush = new PressureSensitiveBrush(canvas);
-    canvas.freeDrawingBrush.color = hexToRgba(node.brushColor, node.brushOpacity);
-    canvas.freeDrawingBrush.baseWidth = node.brushSize;
-    canvas.freeDrawingBrush.pressureSensitivity = node.pressureSensitivity;
-
-    canvas.isDrawingMode = true;
-    canvas.selection = false;
-    canvas.forEachObject(obj => {
-        obj.selectable = false;
-        obj.evented = false;
-    });
-
-    // Setup pen eraser button detection
-    setupPenEraserDetection(node);
-}
-
-/**
- * Setup pen eraser button detection for Wacom tablets
- */
-function setupPenEraserDetection(node) {
-    const canvas = node.fabricCanvas;
-
-    // Remove old listener if exists
-    if (node._penEraserListener) {
-        canvas.upperCanvasEl.removeEventListener('pointerdown', node._penEraserListener);
-    }
-
-    // Add pen eraser detection
-    node._penEraserListener = (e) => {
-        // Check if pen is flipped (eraser button pressed)
-        // pointerType === 'pen' and buttons === 32 indicates eraser
-        if (e.pointerType === 'pen' && e.buttons === 32) {
-            // Temporarily switch to eraser
-            if (node.currentTool === 'brush') {
-                node._tempEraserMode = true;
-                const oldColor = canvas.freeDrawingBrush.color;
-                canvas.freeDrawingBrush = new fabric.EraserBrush(canvas);
-                canvas.freeDrawingBrush.width = node.brushSize;
-
-                // Switch back on pointerup
-                const restoreBrush = () => {
-                    if (node._tempEraserMode) {
-                        setupBrushMode(node);
-                        node._tempEraserMode = false;
-                    }
-                    canvas.upperCanvasEl.removeEventListener('pointerup', restoreBrush);
-                };
-                canvas.upperCanvasEl.addEventListener('pointerup', restoreBrush, { once: true });
-            }
-        }
-    };
-
-    canvas.upperCanvasEl.addEventListener('pointerdown', node._penEraserListener);
-}
-
-/**
- * Setup eraser mode
- */
-function setupEraserMode(node) {
-    const canvas = node.fabricCanvas;
-    canvas.freeDrawingBrush = new fabric.EraserBrush(canvas);
-    canvas.freeDrawingBrush.width = node.brushSize;
-    canvas.isDrawingMode = true;
-    canvas.selection = false;
-    canvas.forEachObject(obj => {
-        obj.selectable = false;
-        obj.evented = false;
-    });
-}
-
-/**
- * Setup shape drawing mode
- */
-function setupShapeMode(node) {
-    const canvas = node.fabricCanvas;
-    canvas.selection = false;
-    canvas.forEachObject(obj => {
-        obj.selectable = false;
-        obj.evented = false;
-    });
-
-    // Initialize shape drawing state
-    if (!node.shapeDrawing) {
-        node.shapeDrawing = {
-            isDrawing: false,
-            startX: 0,
-            startY: 0,
-            shape: null
-        };
-    }
-
-    // Remove old listeners
-    canvas.off('mouse:down');
-    canvas.off('mouse:move');
-    canvas.off('mouse:up');
-
-    // Add shape drawing listeners
-    canvas.on('mouse:down', (options) => {
-        const pointer = canvas.getPointer(options.e);
-        node.shapeDrawing.isDrawing = true;
-        node.shapeDrawing.startX = pointer.x;
-        node.shapeDrawing.startY = pointer.y;
-
-        // Create shape based on current tool
-        const color = hexToRgba(node.brushColor, node.brushOpacity);
-
-        if (node.currentTool === "line") {
-            node.shapeDrawing.shape = new fabric.Line(
-                [pointer.x, pointer.y, pointer.x, pointer.y],
-                {
-                    stroke: color,
-                    strokeWidth: node.brushSize,
-                    selectable: false,
-                    evented: false
-                }
-            );
-        } else if (node.currentTool === "circle") {
-            node.shapeDrawing.shape = new fabric.Circle({
-                left: pointer.x,
-                top: pointer.y,
-                radius: 0,
-                fill: 'transparent',
-                stroke: color,
-                strokeWidth: node.brushSize,
-                selectable: false,
-                evented: false
-            });
-        } else if (node.currentTool === "rectangle") {
-            node.shapeDrawing.shape = new fabric.Rect({
-                left: pointer.x,
-                top: pointer.y,
-                width: 0,
-                height: 0,
-                fill: 'transparent',
-                stroke: color,
-                strokeWidth: node.brushSize,
-                selectable: false,
-                evented: false
-            });
-        }
-
-        canvas.add(node.shapeDrawing.shape);
-    });
-
-    canvas.on('mouse:move', (options) => {
-        if (!node.shapeDrawing.isDrawing) return;
-
-        const pointer = canvas.getPointer(options.e);
-
-        if (node.currentTool === "line") {
-            node.shapeDrawing.shape.set({
-                x2: pointer.x,
-                y2: pointer.y
-            });
-        } else if (node.currentTool === "circle") {
-            const radius = Math.sqrt(
-                Math.pow(pointer.x - node.shapeDrawing.startX, 2) +
-                Math.pow(pointer.y - node.shapeDrawing.startY, 2)
-            ) / 2;
-            node.shapeDrawing.shape.set({ radius: Math.abs(radius) });
-        } else if (node.currentTool === "rectangle") {
-            const width = pointer.x - node.shapeDrawing.startX;
-            const height = pointer.y - node.shapeDrawing.startY;
-
-            if (width < 0) {
-                node.shapeDrawing.shape.set({ left: pointer.x });
-            }
-            if (height < 0) {
-                node.shapeDrawing.shape.set({ top: pointer.y });
-            }
-
-            node.shapeDrawing.shape.set({
-                width: Math.abs(width),
-                height: Math.abs(height)
-            });
-        }
-
-        canvas.renderAll();
-    });
-
-    canvas.on('mouse:up', () => {
-        node.shapeDrawing.isDrawing = false;
-        node.shapeDrawing.shape = null;
-    });
-}
-
-/**
- * Setup select mode
- */
-function setupSelectMode(node) {
-    const canvas = node.fabricCanvas;
-    canvas.selection = true;
-    canvas.forEachObject(obj => {
-        obj.selectable = true;
-        obj.evented = true;
-    });
-}
-
-/**
- * Update brush settings immediately
- */
-function updateBrushSettings(node) {
-    const canvas = node.fabricCanvas;
-
-    if (node.currentTool === "brush" || node.currentTool === "eraser") {
-        // Force re-enter drawing mode to apply settings immediately
-        const wasDrawingMode = canvas.isDrawingMode;
-
-        if (wasDrawingMode) {
-            canvas.isDrawingMode = false;
-        }
-
-        if (node.currentTool === "brush") {
-            canvas.freeDrawingBrush = new PressureSensitiveBrush(canvas);
-            canvas.freeDrawingBrush.color = hexToRgba(node.brushColor, node.brushOpacity);
-            canvas.freeDrawingBrush.baseWidth = node.brushSize;
-            canvas.freeDrawingBrush.pressureSensitivity = node.pressureSensitivity;
-        } else if (node.currentTool === "eraser") {
-            canvas.freeDrawingBrush = new fabric.EraserBrush(canvas);
-            canvas.freeDrawingBrush.width = node.brushSize;
-        }
-
-        if (wasDrawingMode) {
-            canvas.isDrawingMode = true;
-        }
-    }
-}
-
-/**
- * Update brush cursor preview
- */
-function updateBrushCursor(node) {
-    const canvas = node.fabricCanvas;
-
-    if (node.currentTool === "brush" || node.currentTool === "eraser") {
-        // Create custom cursor showing brush size
-        const size = node.brushSize;
-        const cursorCanvas = document.createElement('canvas');
-        const ctx = cursorCanvas.getContext('2d');
-
-        // Make cursor canvas larger than brush to show full circle
-        cursorCanvas.width = size * 2 + 4;
-        cursorCanvas.height = size * 2 + 4;
-
-        // Draw circle
-        ctx.beginPath();
-        ctx.arc(cursorCanvas.width / 2, cursorCanvas.height / 2, size, 0, 2 * Math.PI);
-
-        if (node.currentTool === "brush") {
-            ctx.strokeStyle = node.brushColor;
-            ctx.fillStyle = hexToRgba(node.brushColor, 0.3);
-            ctx.fill();
-        } else {
-            ctx.strokeStyle = "#000000";
-        }
-
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // Set as cursor
-        const cursorUrl = cursorCanvas.toDataURL();
-        const centerOffset = cursorCanvas.width / 2;
-        canvas.freeDrawingCursor = `url(${cursorUrl}) ${centerOffset} ${centerOffset}, crosshair`;
+    if (node.currentTool === "select") {
+        canvas.defaultCursor = 'default';
     } else {
-        canvas.freeDrawingCursor = 'crosshair';
+        canvas.defaultCursor = 'crosshair';
     }
 }
 
 /**
- * Convert hex color to rgba
+ * Setup drawing handlers
  */
-function hexToRgba(hex, alpha) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+function setupDrawingHandlers(node) {
+    const canvas = node.fabricCanvas;
+
+    // Mouse down
+    canvas.on('mouse:down', (options) => {
+        if (node.currentTool === "select") return;
+
+        const layer = node.layerManager.getActiveLayer();
+        if (!layer || layer.locked) return;
+
+        node.isDrawing = true;
+        node.currentStroke = [];
+
+        const pointer = canvas.getPointer(options.e);
+        const pressure = options.e.pressure || 1.0;
+        node.currentStroke.push({ x: pointer.x, y: pointer.y, pressure });
+    });
+
+    // Mouse move
+    canvas.on('mouse:move', (options) => {
+        if (!node.isDrawing) return;
+
+        const pointer = canvas.getPointer(options.e);
+        const pressure = options.e.pressure || 1.0;
+        node.currentStroke.push({ x: pointer.x, y: pointer.y, pressure });
+
+        // Draw preview on fabric canvas
+        if (node.currentStroke.length > 1) {
+            const layer = node.layerManager.getActiveLayer();
+            if (!layer) return;
+
+            const ctx = canvas.getContext();
+            const p1 = node.currentStroke[node.currentStroke.length - 2];
+            const p2 = node.currentStroke[node.currentStroke.length - 1];
+
+            if (node.currentTool === "brush") {
+                const color = hexToRgba(node.brushColor, node.brushOpacity);
+                const pressure1 = Math.pow(p1.pressure, 1 / node.pressureSensitivity);
+                const pressure2 = Math.pow(p2.pressure, 1 / node.pressureSensitivity);
+                const avgPressure = (pressure1 + pressure2) / 2;
+                const width = Math.max(1, node.brushSize * avgPressure);
+
+                ctx.strokeStyle = color;
+                ctx.lineWidth = width;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            }
+        }
+    });
+
+    // Mouse up
+    canvas.on('mouse:up', () => {
+        if (!node.isDrawing) return;
+        node.isDrawing = false;
+
+        const layer = node.layerManager.getActiveLayer();
+        if (!layer || node.currentStroke.length < 2) return;
+
+        // Commit stroke to layer
+        if (node.currentTool === "brush") {
+            const color = hexToRgba(node.brushColor, node.brushOpacity);
+            layer.drawStroke(node.currentStroke, color, node.brushSize, node.pressureSensitivity);
+        } else if (node.currentTool === "eraser") {
+            layer.erase(node.currentStroke, node.brushSize);
+        }
+
+        // Update composite and save history
+        node.layerManager.updateComposite();
+        node.historyManager.saveState();
+
+        node.currentStroke = [];
+    });
 }
 
 /**
@@ -802,99 +824,70 @@ function initializeFabricCanvas(canvasElement, width, height, node) {
         width: width,
         height: height,
         backgroundColor: "#ffffff",
-        isDrawingMode: true,
-        enableRetinaScaling: true,
-        selection: false
+        selection: false,
+        enableRetinaScaling: true
     });
-
-    // Setup initial drawing brush with pressure sensitivity
-    fabricCanvas.freeDrawingBrush = new PressureSensitiveBrush(fabricCanvas);
-    fabricCanvas.freeDrawingBrush.color = "#000000";
-    fabricCanvas.freeDrawingBrush.baseWidth = 5;
-    fabricCanvas.freeDrawingBrush.pressureSensitivity = 1.0;
-
-    // Store reference to current tool
-    fabricCanvas._currentTool = "brush";
-
-    // Initialize history manager
-    node.historyManager = new HistoryManager(fabricCanvas);
-
-    // Note: Keyboard shortcuts removed to avoid conflicts with ComfyUI
-    // Use toolbar buttons for Undo/Redo instead
 
     return fabricCanvas;
 }
 
 /**
- * Add image to canvas with alpha support
+ * Add image to active layer
  */
 function addImageToCanvas(node, imageUrl) {
-    fabric.Image.fromURL(imageUrl, (img) => {
-        const canvas = node.fabricCanvas;
+    const img = new Image();
+    img.onload = () => {
+        const layer = node.layerManager.getActiveLayer();
+        if (!layer) return;
 
-        // Scale image to fit canvas if too large
+        const canvas = layer.canvas;
+        const ctx = layer.ctx;
+
+        // Scale image to fit if too large
         const maxWidth = canvas.width * 0.8;
         const maxHeight = canvas.height * 0.8;
 
+        let drawWidth = img.width;
+        let drawHeight = img.height;
+
         if (img.width > maxWidth || img.height > maxHeight) {
             const scale = Math.min(maxWidth / img.width, maxHeight / img.height);
-            img.scale(scale);
+            drawWidth = img.width * scale;
+            drawHeight = img.height * scale;
         }
 
         // Center image
-        img.set({
-            left: canvas.width / 2,
-            top: canvas.height / 2,
-            originX: 'center',
-            originY: 'center',
-            selectable: true,
-            hasControls: true,
-            hasBorders: true,
-            transparentCorners: false
-        });
+        const x = (canvas.width - drawWidth) / 2;
+        const y = (canvas.height - drawHeight) / 2;
 
-        canvas.add(img);
-        canvas.renderAll();
+        ctx.drawImage(img, x, y, drawWidth, drawHeight);
 
-        console.log("CBCanvas: Image added with alpha support");
-    }, { crossOrigin: 'anonymous' });
+        node.layerManager.updateComposite();
+        node.historyManager.saveState();
+    };
+    img.src = imageUrl;
 }
 
 /**
  * Resize canvas and preserve content
  */
 function resizeCanvas(node, width, height) {
-    const canvas = node.fabricCanvas;
+    // Resize all layers
+    node.layerManager.resizeAll(width, height);
 
-    // Export current state
-    const json = canvas.toJSON();
-
-    // Update dimensions
-    canvas.setWidth(width);
-    canvas.setHeight(height);
+    // Resize fabric canvas
+    node.fabricCanvas.setWidth(width);
+    node.fabricCanvas.setHeight(height);
 
     // Calculate display size
     const { displayWidth, displayHeight } = calculateDisplaySize(width, height, MAX_DISPLAY_SIZE);
-    canvas.setDimensions({
-        width: width,
-        height: height
-    }, { cssOnly: false });
 
-    // Set wrapper size
-    canvas.wrapperEl.style.width = displayWidth + "px";
-    canvas.wrapperEl.style.height = displayHeight + "px";
+    // Set wrapper sizes
+    node.fabricCanvas.wrapperEl.style.width = displayWidth + "px";
+    node.fabricCanvas.wrapperEl.style.height = displayHeight + "px";
 
-    // Set canvas element sizes
-    canvas.lowerCanvasEl.style.width = displayWidth + "px";
-    canvas.lowerCanvasEl.style.height = displayHeight + "px";
-    canvas.upperCanvasEl.style.width = displayWidth + "px";
-    canvas.upperCanvasEl.style.height = displayHeight + "px";
-
-    // Restore content
-    canvas.loadFromJSON(json, () => {
-        canvas.renderAll();
-        console.log(`CBCanvas: Resized to ${width}x${height}, display ${displayWidth}x${displayHeight}`);
-    });
+    // Update composite
+    node.layerManager.updateComposite();
 
     // Update info label
     if (node.ratioLabel) {
@@ -907,11 +900,25 @@ function resizeCanvas(node, width, height) {
  * Export canvas with alpha
  */
 function exportCanvasWithAlpha(node) {
-    return node.fabricCanvas.toDataURL({
-        format: 'png',
-        quality: 1,
-        multiplier: 1
-    });
+    // Create composite of all visible layers
+    const compositeCanvas = document.createElement('canvas');
+    compositeCanvas.width = node.fabricCanvas.width;
+    compositeCanvas.height = node.fabricCanvas.height;
+    const ctx = compositeCanvas.getContext('2d');
+
+    // White background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+
+    // Draw all visible layers
+    for (const layer of node.layerManager.layers) {
+        if (layer.visible) {
+            ctx.globalAlpha = layer.opacity;
+            ctx.drawImage(layer.canvas, 0, 0);
+        }
+    }
+
+    return compositeCanvas.toDataURL('image/png');
 }
 
 // Register extension
@@ -920,7 +927,7 @@ app.registerExtension({
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === "CBCanvasNode") {
-            console.log("CBCanvas Enhanced: Registering with Wacom tablet support");
+            console.log("CBCanvas Enhanced: Registering layer-based drawing system");
 
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
@@ -934,8 +941,6 @@ app.registerExtension({
                 const { key: initialKey, info: initialInfo, value: initialValue } = resolveAspectRatio(initialRatio);
                 this.currentRatio = initialKey;
 
-                console.log(`CBCanvas Enhanced: Creating with ratio ${initialInfo.ratio} (value: ${initialValue})`);
-
                 // Create container
                 const container = document.createElement("div");
                 container.className = "cbcanvas-enhanced-container";
@@ -944,37 +949,46 @@ app.registerExtension({
                 const toolbar = createToolbar(this);
                 container.appendChild(toolbar);
 
+                // Create main content area with canvas and layers
+                const contentArea = document.createElement("div");
+                contentArea.className = "cbcanvas-content-area";
+
                 // Create canvas wrapper
                 const canvasWrapper = document.createElement("div");
                 canvasWrapper.className = "cbcanvas-canvas-wrapper";
-                canvasWrapper.style.display = "inline-flex";
-                canvasWrapper.style.margin = "0 auto 10px";
-                canvasWrapper.style.width = "fit-content";
-                canvasWrapper.style.maxWidth = "100%";
 
                 // Create canvas element
                 const canvasElement = document.createElement("canvas");
                 canvasElement.id = `cbcanvas-${this.id}`;
 
-                // Initialize fabric canvas with pressure sensitivity
+                // Initialize fabric canvas
                 this.fabricCanvas = initializeFabricCanvas(canvasElement, initialInfo.width, initialInfo.height, this);
+
+                // Initialize layer system
+                this.layerManager = new LayerManager(this.fabricCanvas);
+
+                // Initialize history manager
+                this.historyManager = new HistoryManager(this.layerManager);
+
+                // Setup drawing handlers
+                setupDrawingHandlers(this);
 
                 // Set display size
                 const { displayWidth, displayHeight } = calculateDisplaySize(
                     initialInfo.width, initialInfo.height, MAX_DISPLAY_SIZE
                 );
 
-                // Set wrapper size
                 this.fabricCanvas.wrapperEl.style.width = displayWidth + "px";
                 this.fabricCanvas.wrapperEl.style.height = displayHeight + "px";
 
-                // Set canvas element sizes
-                this.fabricCanvas.lowerCanvasEl.style.width = displayWidth + "px";
-                this.fabricCanvas.lowerCanvasEl.style.height = displayHeight + "px";
-                this.fabricCanvas.upperCanvasEl.style.width = displayWidth + "px";
-                this.fabricCanvas.upperCanvasEl.style.height = displayHeight + "px";
-
                 canvasWrapper.appendChild(this.fabricCanvas.wrapperEl);
+                contentArea.appendChild(canvasWrapper);
+
+                // Create layer panel
+                const layerPanel = createLayerPanel(this);
+                contentArea.appendChild(layerPanel);
+
+                container.appendChild(contentArea);
 
                 // Create info label
                 this.ratioLabel = document.createElement("div");
@@ -984,7 +998,7 @@ app.registerExtension({
                 // Add image upload button
                 const uploadBtn = document.createElement("button");
                 uploadBtn.className = "cbcanvas-upload-btn";
-                uploadBtn.textContent = "📁 Add Image";
+                uploadBtn.textContent = "📁 Add Image to Layer";
                 uploadBtn.onclick = () => {
                     const input = document.createElement("input");
                     input.type = "file";
@@ -1002,18 +1016,17 @@ app.registerExtension({
                     input.click();
                 };
 
-                container.appendChild(canvasWrapper);
                 container.appendChild(this.ratioLabel);
                 container.appendChild(uploadBtn);
 
                 // Add to node
-                this.addDOMWidget("canvas", "fabriccanvas", container);
+                this.addDOMWidget("canvas", "layercanvas", container);
 
                 // Store instance
                 canvasInstances[this.id] = this;
 
-                // Initialize brush cursor
-                updateBrushCursor(this);
+                // Update layer panel
+                updateLayerPanel(this);
 
                 // Listen for aspect ratio changes
                 if (aspectRatioWidget) {
@@ -1030,7 +1043,6 @@ app.registerExtension({
 
                             if (oldValue !== resolved.value) {
                                 node.currentRatio = resolved.key;
-                                console.log(`CBCanvas Enhanced: Updating to ${resolved.info.ratio} (value: ${resolved.value})`);
                                 resizeCanvas(node, resolved.info.width, resolved.info.height);
                             }
 
@@ -1049,7 +1061,7 @@ app.registerExtension({
                     aspectRatioWidget._original_callback = aspectRatioWidget.callback;
                 }
 
-                console.log("CBCanvas Enhanced: Wacom tablet support enabled");
+                console.log("CBCanvas Enhanced: Layer system initialized");
                 return result;
             };
 
@@ -1058,14 +1070,7 @@ app.registerExtension({
             nodeType.prototype.onRemoved = function () {
                 if (canvasInstances[this.id]) {
                     if (this.fabricCanvas) {
-                        // Clean up pen eraser listener
-                        if (this._penEraserListener) {
-                            this.fabricCanvas.upperCanvasEl.removeEventListener('pointerdown', this._penEraserListener);
-                        }
                         this.fabricCanvas.dispose();
-                    }
-                    if (this.historyManager) {
-                        this.historyManager = null;
                     }
                     delete canvasInstances[this.id];
                 }
@@ -1076,9 +1081,9 @@ app.registerExtension({
             const onSerialize = nodeType.prototype.onSerialize;
             nodeType.prototype.onSerialize = function (o) {
                 const result = onSerialize?.apply(this, arguments);
-                if (this.fabricCanvas) {
+                if (this.layerManager) {
                     o.canvas_data = exportCanvasWithAlpha(this);
-                    o.canvas_json = JSON.stringify(this.fabricCanvas.toJSON());
+                    o.layer_data = JSON.stringify(this.layerManager.toJSON());
                 }
                 return result;
             };
@@ -1088,14 +1093,14 @@ app.registerExtension({
             nodeType.prototype.onConfigure = function (o) {
                 const result = onConfigure?.apply(this, arguments);
 
-                if (o.canvas_json && this.fabricCanvas) {
+                if (o.layer_data && this.layerManager) {
                     try {
-                        this.fabricCanvas.loadFromJSON(JSON.parse(o.canvas_json), () => {
-                            this.fabricCanvas.renderAll();
-                            console.log("CBCanvas Enhanced: Canvas restored from save");
+                        this.layerManager.fromJSON(JSON.parse(o.layer_data), () => {
+                            updateLayerPanel(this);
+                            console.log("CBCanvas Enhanced: Layers restored");
                         });
                     } catch (e) {
-                        console.error("CBCanvas Enhanced: Failed to restore canvas", e);
+                        console.error("CBCanvas Enhanced: Failed to restore layers", e);
                     }
                 }
 
@@ -1105,4 +1110,4 @@ app.registerExtension({
     }
 });
 
-console.log("CBCanvas Enhanced: Loaded with Wacom tablet pressure sensitivity support");
+console.log("CBCanvas Enhanced: Loaded with Photoshop-like layer system");
