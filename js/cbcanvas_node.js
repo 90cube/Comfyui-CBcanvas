@@ -266,6 +266,48 @@ class LayerManager {
     }
 
     /**
+     * Move layer up in the stack
+     */
+    moveLayerUp(index) {
+        if (index <= 0 || index >= this.layers.length) return;
+
+        // Swap with layer above
+        const temp = this.layers[index];
+        this.layers[index] = this.layers[index - 1];
+        this.layers[index - 1] = temp;
+
+        // Update active layer index if needed
+        if (this.activeLayerIndex === index) {
+            this.activeLayerIndex = index - 1;
+        } else if (this.activeLayerIndex === index - 1) {
+            this.activeLayerIndex = index;
+        }
+
+        this.updateComposite();
+    }
+
+    /**
+     * Move layer down in the stack
+     */
+    moveLayerDown(index) {
+        if (index < 0 || index >= this.layers.length - 1) return;
+
+        // Swap with layer below
+        const temp = this.layers[index];
+        this.layers[index] = this.layers[index + 1];
+        this.layers[index + 1] = temp;
+
+        // Update active layer index if needed
+        if (this.activeLayerIndex === index) {
+            this.activeLayerIndex = index + 1;
+        } else if (this.activeLayerIndex === index + 1) {
+            this.activeLayerIndex = index;
+        }
+
+        this.updateComposite();
+    }
+
+    /**
      * Update composite - combine all layers to fabric canvas
      */
     updateComposite() {
@@ -283,9 +325,14 @@ class LayerManager {
         compositeCtx.fillStyle = '#ffffff';
         compositeCtx.fillRect(0, 0, compositeCanvas.width, compositeCanvas.height);
 
-        // Draw each visible layer
-        for (const layer of this.layers) {
-            if (layer.visible) {
+        // Get node reference from fabricCanvas
+        const node = this.fabricCanvas.node;
+        const transformingLayerIndex = node ? node.transformingLayerIndex : -1;
+
+        // Draw each visible layer (except transforming layer)
+        for (let i = 0; i < this.layers.length; i++) {
+            const layer = this.layers[i];
+            if (layer.visible && i !== transformingLayerIndex) {
                 compositeCtx.globalAlpha = layer.opacity;
                 compositeCtx.drawImage(layer.canvas, 0, 0);
             }
@@ -509,6 +556,7 @@ function createToolbar(node) {
     node.isDrawing = false;
     node.currentStroke = [];
     node.transformObject = null;
+    node.transformingLayerIndex = -1;
 
     // Tool buttons - Row 1: Drawing Tools
     const tools = [
@@ -814,6 +862,30 @@ function updateLayerPanel(node) {
             }
         };
 
+        // Move up button
+        const upBtn = document.createElement("button");
+        upBtn.className = "cbcanvas-layer-move-btn";
+        upBtn.textContent = "▲";
+        upBtn.title = "Move Up";
+        upBtn.disabled = index === 0;
+        upBtn.onclick = () => {
+            node.layerManager.moveLayerUp(index);
+            node.historyManager.saveState();
+            updateLayerPanel(node);
+        };
+
+        // Move down button
+        const downBtn = document.createElement("button");
+        downBtn.className = "cbcanvas-layer-move-btn";
+        downBtn.textContent = "▼";
+        downBtn.title = "Move Down";
+        downBtn.disabled = index === node.layerManager.layers.length - 1;
+        downBtn.onclick = () => {
+            node.layerManager.moveLayerDown(index);
+            node.historyManager.saveState();
+            updateLayerPanel(node);
+        };
+
         const delBtn = document.createElement("button");
         delBtn.className = "cbcanvas-layer-del-btn";
         delBtn.textContent = "🗑";
@@ -827,6 +899,8 @@ function updateLayerPanel(node) {
 
         layerItem.appendChild(visBtn);
         layerItem.appendChild(nameSpan);
+        layerItem.appendChild(upBtn);
+        layerItem.appendChild(downBtn);
         layerItem.appendChild(delBtn);
         layerList.appendChild(layerItem);
     });
@@ -844,6 +918,9 @@ function refreshTransformObject(node) {
         node.transformObject = null;
     }
 
+    // Mark current layer as transforming (to exclude from composite)
+    node.transformingLayerIndex = node.layerManager.activeLayerIndex;
+
     // Create new transform object for active layer
     const layer = node.layerManager.getActiveLayer();
     if (layer) {
@@ -857,6 +934,9 @@ function refreshTransformObject(node) {
             node.transformObject = img;
             canvas.add(img);
             canvas.setActiveObject(img);
+
+            // Update composite to hide original layer
+            node.layerManager.updateComposite();
             canvas.renderAll();
         });
     }
@@ -898,6 +978,9 @@ function updateCanvasMode(node) {
                         node.transformObject.width * node.transformObject.scaleX,
                         node.transformObject.height * node.transformObject.scaleY
                     );
+
+                    // Clear transforming flag and update composite
+                    node.transformingLayerIndex = -1;
                     node.layerManager.updateComposite();
                     node.historyManager.saveState();
                 };

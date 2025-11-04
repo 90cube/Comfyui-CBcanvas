@@ -356,7 +356,8 @@
 }
 
 .cbcanvas-layer-vis-btn,
-.cbcanvas-layer-del-btn {
+.cbcanvas-layer-del-btn,
+.cbcanvas-layer-move-btn {
     padding: 1px 4px;
     background-color: #333;
     color: #fff;
@@ -377,6 +378,16 @@
 .cbcanvas-layer-del-btn:hover {
     background-color: #ff4a4a;
     border-color: #ff6b6b;
+}
+
+.cbcanvas-layer-move-btn:hover:not(:disabled) {
+    background-color: #4a9eff;
+    border-color: #6bb3ff;
+}
+
+.cbcanvas-layer-move-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
 }
 
 .cbcanvas-layer-item.active span {
