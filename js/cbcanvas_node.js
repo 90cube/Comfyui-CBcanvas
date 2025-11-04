@@ -602,46 +602,76 @@ function createToolbar(node) {
     // Brush size slider
     const sizeControl = document.createElement("div");
     sizeControl.className = "cbcanvas-control";
-    sizeControl.innerHTML = `
-        <label>Size: <span id="brushsize-${node.id}">${node.brushSize}</span></label>
-        <input type="range" min="1" max="50" value="${node.brushSize}"
-               class="cbcanvas-slider" id="brushslider-${node.id}">
-    `;
-    const sizeSlider = sizeControl.querySelector("input");
+
+    const sizeLabel = document.createElement("label");
+    sizeLabel.textContent = "Size: ";
+    const sizeSpan = document.createElement("span");
+    sizeSpan.textContent = node.brushSize;
+    sizeLabel.appendChild(sizeSpan);
+
+    const sizeSlider = document.createElement("input");
+    sizeSlider.type = "range";
+    sizeSlider.min = "1";
+    sizeSlider.max = "50";
+    sizeSlider.value = node.brushSize;
+    sizeSlider.className = "cbcanvas-slider";
     sizeSlider.oninput = (e) => {
         node.brushSize = parseInt(e.target.value);
-        document.getElementById(`brushsize-${node.id}`).textContent = node.brushSize;
+        sizeSpan.textContent = node.brushSize;
     };
+
+    sizeControl.appendChild(sizeLabel);
+    sizeControl.appendChild(sizeSlider);
     controlsRow.appendChild(sizeControl);
 
     // Opacity slider
     const opacityControl = document.createElement("div");
     opacityControl.className = "cbcanvas-control";
-    opacityControl.innerHTML = `
-        <label>Opacity: <span id="brushopacity-${node.id}">${Math.round(node.brushOpacity * 100)}%</span></label>
-        <input type="range" min="0" max="100" value="${node.brushOpacity * 100}"
-               class="cbcanvas-slider" id="opacityslider-${node.id}">
-    `;
-    const opacitySlider = opacityControl.querySelector("input");
+
+    const opacityLabel = document.createElement("label");
+    opacityLabel.textContent = "Opacity: ";
+    const opacitySpan = document.createElement("span");
+    opacitySpan.textContent = Math.round(node.brushOpacity * 100) + "%";
+    opacityLabel.appendChild(opacitySpan);
+
+    const opacitySlider = document.createElement("input");
+    opacitySlider.type = "range";
+    opacitySlider.min = "0";
+    opacitySlider.max = "100";
+    opacitySlider.value = node.brushOpacity * 100;
+    opacitySlider.className = "cbcanvas-slider";
     opacitySlider.oninput = (e) => {
         node.brushOpacity = parseInt(e.target.value) / 100;
-        document.getElementById(`brushopacity-${node.id}`).textContent = Math.round(node.brushOpacity * 100) + "%";
+        opacitySpan.textContent = Math.round(node.brushOpacity * 100) + "%";
     };
+
+    opacityControl.appendChild(opacityLabel);
+    opacityControl.appendChild(opacitySlider);
     controlsRow.appendChild(opacityControl);
 
     // Pressure sensitivity slider
     const pressureControl = document.createElement("div");
     pressureControl.className = "cbcanvas-control";
-    pressureControl.innerHTML = `
-        <label>Pressure: <span id="pressure-${node.id}">${Math.round(node.pressureSensitivity * 100)}%</span></label>
-        <input type="range" min="20" max="200" value="${node.pressureSensitivity * 100}"
-               class="cbcanvas-slider" id="pressureslider-${node.id}">
-    `;
-    const pressureSlider = pressureControl.querySelector("input");
+
+    const pressureLabel = document.createElement("label");
+    pressureLabel.textContent = "Pressure: ";
+    const pressureSpan = document.createElement("span");
+    pressureSpan.textContent = Math.round(node.pressureSensitivity * 100) + "%";
+    pressureLabel.appendChild(pressureSpan);
+
+    const pressureSlider = document.createElement("input");
+    pressureSlider.type = "range";
+    pressureSlider.min = "20";
+    pressureSlider.max = "200";
+    pressureSlider.value = node.pressureSensitivity * 100;
+    pressureSlider.className = "cbcanvas-slider";
     pressureSlider.oninput = (e) => {
         node.pressureSensitivity = parseInt(e.target.value) / 100;
-        document.getElementById(`pressure-${node.id}`).textContent = Math.round(node.pressureSensitivity * 100) + "%";
+        pressureSpan.textContent = Math.round(node.pressureSensitivity * 100) + "%";
     };
+
+    pressureControl.appendChild(pressureLabel);
+    pressureControl.appendChild(pressureSlider);
     controlsRow.appendChild(pressureControl);
 
     // Color picker
