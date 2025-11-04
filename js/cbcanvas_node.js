@@ -566,10 +566,8 @@ function createToolbar(node) {
                     updateLayerPanel(node);
                 }
             } else if (tool.id === "newlayer") {
-                console.log("New Layer clicked, LayerManager:", node.layerManager);
                 if (node.layerManager) {
-                    const newLayer = node.layerManager.addLayer(`Layer ${node.layerManager.layers.length + 1}`);
-                    console.log("New layer created:", newLayer, "Total layers:", node.layerManager.layers.length);
+                    node.layerManager.addLayer(`Layer ${node.layerManager.layers.length + 1}`);
                     node.historyManager.saveState();
                     updateLayerPanel(node);
                 }
@@ -1027,8 +1025,6 @@ app.registerExtension({
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === "CBCanvasNode") {
-            console.log("CBCanvas Enhanced: Registering layer-based drawing system");
-
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 const result = onNodeCreated?.apply(this, arguments);
@@ -1178,7 +1174,6 @@ app.registerExtension({
                                 const reader = new FileReader();
                                 reader.onload = (e) => {
                                     addImageToCanvas(this, e.target.result);
-                                    console.log("CBCanvas: Initial image loaded to canvas");
                                 };
                                 reader.readAsDataURL(blob);
                             })
@@ -1186,7 +1181,6 @@ app.registerExtension({
                     }, 500);
                 }
 
-                console.log("CBCanvas Enhanced: Layer system initialized");
                 return result;
             };
 
@@ -1235,7 +1229,6 @@ app.registerExtension({
                     try {
                         this.layerManager.fromJSON(JSON.parse(o.layer_data), () => {
                             updateLayerPanel(this);
-                            console.log("CBCanvas Enhanced: Layers restored");
                         });
                     } catch (e) {
                         console.error("CBCanvas Enhanced: Failed to restore layers", e);
@@ -1247,5 +1240,3 @@ app.registerExtension({
         }
     }
 });
-
-console.log("CBCanvas Enhanced: Loaded with Photoshop-like layer system");
