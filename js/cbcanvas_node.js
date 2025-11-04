@@ -172,6 +172,8 @@ class LayerManager {
         this.fabricCanvas = fabricCanvas;
         this.layers = [];
         this.activeLayerIndex = -1;
+        this.compositeScheduled = false;
+        this.compositeNeeded = false;
 
         // Create default white background layer
         const bgLayer = new Layer(
@@ -266,33 +268,12 @@ class LayerManager {
     }
 
     /**
-     * Move layer up in the stack
+     * Move layer up in the stack (higher render order, appears on top)
      */
     moveLayerUp(index) {
-        if (index <= 0 || index >= this.layers.length) return;
-
-        // Swap with layer above
-        const temp = this.layers[index];
-        this.layers[index] = this.layers[index - 1];
-        this.layers[index - 1] = temp;
-
-        // Update active layer index if needed
-        if (this.activeLayerIndex === index) {
-            this.activeLayerIndex = index - 1;
-        } else if (this.activeLayerIndex === index - 1) {
-            this.activeLayerIndex = index;
-        }
-
-        this.updateComposite();
-    }
-
-    /**
-     * Move layer down in the stack
-     */
-    moveLayerDown(index) {
         if (index < 0 || index >= this.layers.length - 1) return;
 
-        // Swap with layer below
+        // Swap with layer above (higher index = rendered later = on top)
         const temp = this.layers[index];
         this.layers[index] = this.layers[index + 1];
         this.layers[index + 1] = temp;
@@ -308,9 +289,32 @@ class LayerManager {
     }
 
     /**
+     * Move layer down in the stack (lower render order, appears below)
+     */
+    moveLayerDown(index) {
+        if (index <= 0 || index >= this.layers.length) return;
+
+        // Swap with layer below (lower index = rendered earlier = below)
+        const temp = this.layers[index];
+        this.layers[index] = this.layers[index - 1];
+        this.layers[index - 1] = temp;
+
+        // Update active layer index if needed
+        if (this.activeLayerIndex === index) {
+            this.activeLayerIndex = index - 1;
+        } else if (this.activeLayerIndex === index - 1) {
+            this.activeLayerIndex = index;
+        }
+
+        this.updateComposite();
+    }
+
+    /**
      * Update composite - combine all layers to fabric canvas
      */
     updateComposite() {
+        this.compositeScheduled = false;
+
         // Clear fabric canvas
         this.fabricCanvas.clear();
         this.fabricCanvas.backgroundColor = "#ffffff";
@@ -353,6 +357,18 @@ class LayerManager {
             this.fabricCanvas.add(img);
             this.fabricCanvas.renderAll();
         }, { crossOrigin: 'anonymous' });
+    }
+
+    /**
+     * Request composite update (throttled with requestAnimationFrame)
+     */
+    requestCompositeUpdate() {
+        if (!this.compositeScheduled) {
+            this.compositeScheduled = true;
+            requestAnimationFrame(() => {
+                this.updateComposite();
+            });
+        }
     }
 
     /**
@@ -1063,8 +1079,8 @@ function setupDrawingHandlers(node) {
                 ctx.globalCompositeOperation = 'source-over';
             }
 
-            // Update composite to show changes
-            node.layerManager.updateComposite();
+            // Request composite update (throttled)
+            node.layerManager.requestCompositeUpdate();
         }
     });
 
@@ -1073,8 +1089,10 @@ function setupDrawingHandlers(node) {
         if (!node.isDrawing) return;
         node.isDrawing = false;
 
-        // Stroke already drawn in mouse:move, just save history
+        // Stroke already drawn in mouse:move
         if (node.currentStroke.length >= 2) {
+            // Force final composite update
+            node.layerManager.updateComposite();
             node.historyManager.saveState();
         }
 
