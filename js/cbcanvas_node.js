@@ -1,6 +1,6 @@
 /**
- * CBCanvas Node Enhanced - With Brush, Eraser, Layers, and Transform
- * Full-featured canvas with fabric.js
+ * CBCanvas Node Enhanced - Professional Drawing Tool
+ * Features: Brush, Eraser, Shapes, Undo/Redo, Opacity, Color Palette
  */
 
 import { app } from "../../scripts/app.js";
@@ -35,6 +35,12 @@ const extensionName = "CBCanvas.Enhanced";
 
 // Canvas instances
 const canvasInstances = {};
+
+// Default color palette
+const DEFAULT_COLORS = [
+    "#000000", "#FFFFFF", "#FF0000", "#00FF00", "#0000FF",
+    "#FFFF00", "#FF00FF", "#00FFFF", "#FFA500", "#800080"
+];
 
 /**
  * Resolve aspect ratio key/info safely
@@ -77,7 +83,87 @@ function calculateDisplaySize(width, height, maxSize) {
 }
 
 /**
- * Create toolbar with brush, eraser, and tools
+ * History Manager for Undo/Redo
+ */
+class HistoryManager {
+    constructor(canvas, maxStates = 20) {
+        this.canvas = canvas;
+        this.maxStates = maxStates;
+        this.states = [];
+        this.currentIndex = -1;
+        this.isRestoring = false;
+
+        // Save initial state
+        this.saveState();
+
+        // Listen to canvas modifications
+        this.canvas.on('object:added', () => this.onCanvasModified());
+        this.canvas.on('object:modified', () => this.onCanvasModified());
+        this.canvas.on('object:removed', () => this.onCanvasModified());
+    }
+
+    onCanvasModified() {
+        if (!this.isRestoring) {
+            this.saveState();
+        }
+    }
+
+    saveState() {
+        // Remove any states after current index
+        if (this.currentIndex < this.states.length - 1) {
+            this.states = this.states.slice(0, this.currentIndex + 1);
+        }
+
+        // Save current state
+        const json = JSON.stringify(this.canvas.toJSON());
+        this.states.push(json);
+
+        // Limit history size
+        if (this.states.length > this.maxStates) {
+            this.states.shift();
+        } else {
+            this.currentIndex++;
+        }
+    }
+
+    undo() {
+        if (this.currentIndex > 0) {
+            this.currentIndex--;
+            this.restoreState();
+            return true;
+        }
+        return false;
+    }
+
+    redo() {
+        if (this.currentIndex < this.states.length - 1) {
+            this.currentIndex++;
+            this.restoreState();
+            return true;
+        }
+        return false;
+    }
+
+    restoreState() {
+        this.isRestoring = true;
+        const state = this.states[this.currentIndex];
+        this.canvas.loadFromJSON(JSON.parse(state), () => {
+            this.canvas.renderAll();
+            this.isRestoring = false;
+        });
+    }
+
+    canUndo() {
+        return this.currentIndex > 0;
+    }
+
+    canRedo() {
+        return this.currentIndex < this.states.length - 1;
+    }
+}
+
+/**
+ * Create toolbar with enhanced tools
  */
 function createToolbar(node) {
     const toolbar = document.createElement("div");
@@ -87,46 +173,93 @@ function createToolbar(node) {
     node.currentTool = "brush";
     node.brushSize = 5;
     node.brushColor = "#000000";
+    node.brushOpacity = 1.0;
+    node.colorPalette = [...DEFAULT_COLORS];
 
-    // Tool buttons
+    // Tool buttons - Row 1: Drawing Tools
     const tools = [
-        { id: "brush", icon: "✏️", label: "Brush" },
-        { id: "eraser", icon: "🧹", label: "Eraser" },
-        { id: "select", icon: "↖️", label: "Select/Move" },
-        { id: "clear", icon: "🗑️", label: "Clear All" }
+        { id: "brush", icon: "✏️", label: "Brush", row: 1 },
+        { id: "eraser", icon: "🧹", label: "Eraser", row: 1 },
+        { id: "line", icon: "📏", label: "Line", row: 1 },
+        { id: "circle", icon: "⭕", label: "Circle", row: 1 },
+        { id: "rectangle", icon: "▭", label: "Rectangle", row: 1 },
+        { id: "select", icon: "↖️", label: "Select", row: 1 }
     ];
 
+    // Row 2: Action Tools
+    const actionTools = [
+        { id: "undo", icon: "↶", label: "Undo", row: 2 },
+        { id: "redo", icon: "↷", label: "Redo", row: 2 },
+        { id: "clear", icon: "🗑️", label: "Clear", row: 2 }
+    ];
+
+    // Create tool rows
+    const toolRow1 = document.createElement("div");
+    toolRow1.className = "cbcanvas-tool-row";
+
+    const toolRow2 = document.createElement("div");
+    toolRow2.className = "cbcanvas-tool-row";
+
+    // Add drawing tools
     tools.forEach(tool => {
         const btn = document.createElement("button");
         btn.className = "cbcanvas-tool-btn";
         btn.title = tool.label;
         btn.innerHTML = `${tool.icon}<br><span>${tool.label}</span>`;
+        btn.dataset.tool = tool.id;
 
         if (tool.id === node.currentTool) {
             btn.classList.add("active");
         }
 
         btn.onclick = () => {
-            // Remove active from all buttons
-            toolbar.querySelectorAll(".cbcanvas-tool-btn").forEach(b => b.classList.remove("active"));
-
-            if (tool.id === "clear") {
-                // Clear canvas
-                if (confirm("Clear all canvas content?")) {
-                    node.fabricCanvas.clear();
-                    node.fabricCanvas.backgroundColor = "#ffffff";
-                    node.fabricCanvas.renderAll();
-                }
-                return;
-            }
-
+            toolRow1.querySelectorAll(".cbcanvas-tool-btn").forEach(b => b.classList.remove("active"));
             btn.classList.add("active");
             node.currentTool = tool.id;
             updateCanvasMode(node);
         };
 
-        toolbar.appendChild(btn);
+        toolRow1.appendChild(btn);
     });
+
+    // Add action tools
+    actionTools.forEach(tool => {
+        const btn = document.createElement("button");
+        btn.className = "cbcanvas-tool-btn";
+        btn.title = tool.label;
+        btn.innerHTML = `${tool.icon}<br><span>${tool.label}</span>`;
+        btn.dataset.action = tool.id;
+
+        btn.onclick = () => {
+            if (tool.id === "clear") {
+                if (confirm("Clear all canvas content?")) {
+                    node.fabricCanvas.clear();
+                    node.fabricCanvas.backgroundColor = "#ffffff";
+                    node.fabricCanvas.renderAll();
+                    if (node.historyManager) {
+                        node.historyManager.saveState();
+                    }
+                }
+            } else if (tool.id === "undo") {
+                if (node.historyManager) {
+                    node.historyManager.undo();
+                }
+            } else if (tool.id === "redo") {
+                if (node.historyManager) {
+                    node.historyManager.redo();
+                }
+            }
+        };
+
+        toolRow2.appendChild(btn);
+    });
+
+    toolbar.appendChild(toolRow1);
+    toolbar.appendChild(toolRow2);
+
+    // Controls row
+    const controlsRow = document.createElement("div");
+    controlsRow.className = "cbcanvas-controls-row";
 
     // Brush size slider
     const sizeControl = document.createElement("div");
@@ -141,8 +274,25 @@ function createToolbar(node) {
         node.brushSize = parseInt(e.target.value);
         document.getElementById(`brushsize-${node.id}`).textContent = node.brushSize;
         updateBrushSettings(node);
+        updateBrushCursor(node);
     };
-    toolbar.appendChild(sizeControl);
+    controlsRow.appendChild(sizeControl);
+
+    // Opacity slider
+    const opacityControl = document.createElement("div");
+    opacityControl.className = "cbcanvas-control";
+    opacityControl.innerHTML = `
+        <label>Opacity: <span id="brushopacity-${node.id}">${Math.round(node.brushOpacity * 100)}%</span></label>
+        <input type="range" min="0" max="100" value="${node.brushOpacity * 100}"
+               class="cbcanvas-slider" id="opacityslider-${node.id}">
+    `;
+    const opacitySlider = opacityControl.querySelector("input");
+    opacitySlider.oninput = (e) => {
+        node.brushOpacity = parseInt(e.target.value) / 100;
+        document.getElementById(`brushopacity-${node.id}`).textContent = Math.round(node.brushOpacity * 100) + "%";
+        updateBrushSettings(node);
+    };
+    controlsRow.appendChild(opacityControl);
 
     // Color picker
     const colorControl = document.createElement("div");
@@ -156,8 +306,36 @@ function createToolbar(node) {
     colorPicker.oninput = (e) => {
         node.brushColor = e.target.value;
         updateBrushSettings(node);
+        updateBrushCursor(node);
     };
-    toolbar.appendChild(colorControl);
+    controlsRow.appendChild(colorControl);
+
+    toolbar.appendChild(controlsRow);
+
+    // Color palette
+    const paletteRow = document.createElement("div");
+    paletteRow.className = "cbcanvas-palette-row";
+    paletteRow.innerHTML = `<label>Palette:</label>`;
+
+    const paletteContainer = document.createElement("div");
+    paletteContainer.className = "cbcanvas-palette-container";
+
+    node.colorPalette.forEach(color => {
+        const colorBtn = document.createElement("button");
+        colorBtn.className = "cbcanvas-palette-color";
+        colorBtn.style.backgroundColor = color;
+        colorBtn.title = color;
+        colorBtn.onclick = () => {
+            node.brushColor = color;
+            colorPicker.value = color;
+            updateBrushSettings(node);
+            updateBrushCursor(node);
+        };
+        paletteContainer.appendChild(colorBtn);
+    });
+
+    paletteRow.appendChild(paletteContainer);
+    toolbar.appendChild(paletteRow);
 
     return toolbar;
 }
@@ -168,74 +346,284 @@ function createToolbar(node) {
 function updateCanvasMode(node) {
     const canvas = node.fabricCanvas;
 
-    // Store current tool on canvas for path:created event
+    // Store current tool
     canvas._currentTool = node.currentTool;
 
-    // Disable drawing mode first for clean state
+    // Disable drawing mode first
     canvas.isDrawingMode = false;
+
+    // Disable any active shape drawing
+    if (node.shapeDrawing) {
+        node.shapeDrawing.isDrawing = false;
+        node.shapeDrawing.shape = null;
+    }
 
     switch (node.currentTool) {
         case "brush":
-            // Always create a fresh PencilBrush instance when switching to brush
-            canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
-            canvas.freeDrawingBrush.color = node.brushColor;
-            canvas.freeDrawingBrush.width = node.brushSize;
-            canvas.isDrawingMode = true;
-            canvas.selection = false;
-            canvas.forEachObject(obj => {
-                obj.selectable = false;
-                obj.evented = false;
-            });
+            setupBrushMode(node);
             break;
 
         case "eraser":
-            // Create fresh EraserBrush instance
-            canvas.freeDrawingBrush = new fabric.EraserBrush(canvas);
-            canvas.freeDrawingBrush.width = node.brushSize;
-            canvas.isDrawingMode = true;
-            canvas.selection = false;
-            canvas.forEachObject(obj => {
-                obj.selectable = false;
-                obj.evented = false;
-            });
+            setupEraserMode(node);
+            break;
+
+        case "line":
+        case "circle":
+        case "rectangle":
+            setupShapeMode(node);
             break;
 
         case "select":
-            canvas.isDrawingMode = false;
-            canvas.selection = true;
-            // Make ALL existing objects selectable
-            canvas.forEachObject(obj => {
-                obj.selectable = true;
-                obj.evented = true;
-            });
+            setupSelectMode(node);
             break;
     }
 
     canvas.renderAll();
+    updateBrushCursor(node);
 }
 
 /**
- * Update brush settings
+ * Setup brush mode
+ */
+function setupBrushMode(node) {
+    const canvas = node.fabricCanvas;
+    canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+    canvas.freeDrawingBrush.color = hexToRgba(node.brushColor, node.brushOpacity);
+    canvas.freeDrawingBrush.width = node.brushSize;
+    canvas.isDrawingMode = true;
+    canvas.selection = false;
+    canvas.forEachObject(obj => {
+        obj.selectable = false;
+        obj.evented = false;
+    });
+}
+
+/**
+ * Setup eraser mode
+ */
+function setupEraserMode(node) {
+    const canvas = node.fabricCanvas;
+    canvas.freeDrawingBrush = new fabric.EraserBrush(canvas);
+    canvas.freeDrawingBrush.width = node.brushSize;
+    canvas.isDrawingMode = true;
+    canvas.selection = false;
+    canvas.forEachObject(obj => {
+        obj.selectable = false;
+        obj.evented = false;
+    });
+}
+
+/**
+ * Setup shape drawing mode
+ */
+function setupShapeMode(node) {
+    const canvas = node.fabricCanvas;
+    canvas.selection = false;
+    canvas.forEachObject(obj => {
+        obj.selectable = false;
+        obj.evented = false;
+    });
+
+    // Initialize shape drawing state
+    if (!node.shapeDrawing) {
+        node.shapeDrawing = {
+            isDrawing: false,
+            startX: 0,
+            startY: 0,
+            shape: null
+        };
+    }
+
+    // Remove old listeners
+    canvas.off('mouse:down');
+    canvas.off('mouse:move');
+    canvas.off('mouse:up');
+
+    // Add shape drawing listeners
+    canvas.on('mouse:down', (options) => {
+        const pointer = canvas.getPointer(options.e);
+        node.shapeDrawing.isDrawing = true;
+        node.shapeDrawing.startX = pointer.x;
+        node.shapeDrawing.startY = pointer.y;
+
+        // Create shape based on current tool
+        const color = hexToRgba(node.brushColor, node.brushOpacity);
+
+        if (node.currentTool === "line") {
+            node.shapeDrawing.shape = new fabric.Line(
+                [pointer.x, pointer.y, pointer.x, pointer.y],
+                {
+                    stroke: color,
+                    strokeWidth: node.brushSize,
+                    selectable: false,
+                    evented: false
+                }
+            );
+        } else if (node.currentTool === "circle") {
+            node.shapeDrawing.shape = new fabric.Circle({
+                left: pointer.x,
+                top: pointer.y,
+                radius: 0,
+                fill: 'transparent',
+                stroke: color,
+                strokeWidth: node.brushSize,
+                selectable: false,
+                evented: false
+            });
+        } else if (node.currentTool === "rectangle") {
+            node.shapeDrawing.shape = new fabric.Rect({
+                left: pointer.x,
+                top: pointer.y,
+                width: 0,
+                height: 0,
+                fill: 'transparent',
+                stroke: color,
+                strokeWidth: node.brushSize,
+                selectable: false,
+                evented: false
+            });
+        }
+
+        canvas.add(node.shapeDrawing.shape);
+    });
+
+    canvas.on('mouse:move', (options) => {
+        if (!node.shapeDrawing.isDrawing) return;
+
+        const pointer = canvas.getPointer(options.e);
+
+        if (node.currentTool === "line") {
+            node.shapeDrawing.shape.set({
+                x2: pointer.x,
+                y2: pointer.y
+            });
+        } else if (node.currentTool === "circle") {
+            const radius = Math.sqrt(
+                Math.pow(pointer.x - node.shapeDrawing.startX, 2) +
+                Math.pow(pointer.y - node.shapeDrawing.startY, 2)
+            ) / 2;
+            node.shapeDrawing.shape.set({ radius: Math.abs(radius) });
+        } else if (node.currentTool === "rectangle") {
+            const width = pointer.x - node.shapeDrawing.startX;
+            const height = pointer.y - node.shapeDrawing.startY;
+
+            if (width < 0) {
+                node.shapeDrawing.shape.set({ left: pointer.x });
+            }
+            if (height < 0) {
+                node.shapeDrawing.shape.set({ top: pointer.y });
+            }
+
+            node.shapeDrawing.shape.set({
+                width: Math.abs(width),
+                height: Math.abs(height)
+            });
+        }
+
+        canvas.renderAll();
+    });
+
+    canvas.on('mouse:up', () => {
+        node.shapeDrawing.isDrawing = false;
+        node.shapeDrawing.shape = null;
+    });
+}
+
+/**
+ * Setup select mode
+ */
+function setupSelectMode(node) {
+    const canvas = node.fabricCanvas;
+    canvas.selection = true;
+    canvas.forEachObject(obj => {
+        obj.selectable = true;
+        obj.evented = true;
+    });
+}
+
+/**
+ * Update brush settings immediately
  */
 function updateBrushSettings(node) {
     const canvas = node.fabricCanvas;
 
-    // Apply settings immediately based on current tool
-    if (canvas.freeDrawingBrush) {
-        // Update brush width for both brush and eraser
-        canvas.freeDrawingBrush.width = node.brushSize;
+    if (node.currentTool === "brush" || node.currentTool === "eraser") {
+        // Force re-enter drawing mode to apply settings immediately
+        const wasDrawingMode = canvas.isDrawingMode;
 
-        // Update color only for PencilBrush (not for eraser)
-        if (node.currentTool === "brush" && canvas.freeDrawingBrush instanceof fabric.PencilBrush) {
-            canvas.freeDrawingBrush.color = node.brushColor;
+        if (wasDrawingMode) {
+            canvas.isDrawingMode = false;
+        }
+
+        if (node.currentTool === "brush") {
+            canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+            canvas.freeDrawingBrush.color = hexToRgba(node.brushColor, node.brushOpacity);
+            canvas.freeDrawingBrush.width = node.brushSize;
+        } else if (node.currentTool === "eraser") {
+            canvas.freeDrawingBrush = new fabric.EraserBrush(canvas);
+            canvas.freeDrawingBrush.width = node.brushSize;
+        }
+
+        if (wasDrawingMode) {
+            canvas.isDrawingMode = true;
         }
     }
 }
 
 /**
+ * Update brush cursor preview
+ */
+function updateBrushCursor(node) {
+    const canvas = node.fabricCanvas;
+
+    if (node.currentTool === "brush" || node.currentTool === "eraser") {
+        // Create custom cursor showing brush size
+        const size = node.brushSize;
+        const cursorCanvas = document.createElement('canvas');
+        const ctx = cursorCanvas.getContext('2d');
+
+        // Make cursor canvas larger than brush to show full circle
+        cursorCanvas.width = size * 2 + 4;
+        cursorCanvas.height = size * 2 + 4;
+
+        // Draw circle
+        ctx.beginPath();
+        ctx.arc(cursorCanvas.width / 2, cursorCanvas.height / 2, size, 0, 2 * Math.PI);
+
+        if (node.currentTool === "brush") {
+            ctx.strokeStyle = node.brushColor;
+            ctx.fillStyle = hexToRgba(node.brushColor, 0.3);
+            ctx.fill();
+        } else {
+            ctx.strokeStyle = "#000000";
+        }
+
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Set as cursor
+        const cursorUrl = cursorCanvas.toDataURL();
+        const centerOffset = cursorCanvas.width / 2;
+        canvas.freeDrawingCursor = `url(${cursorUrl}) ${centerOffset} ${centerOffset}, crosshair`;
+    } else {
+        canvas.freeDrawingCursor = 'crosshair';
+    }
+}
+
+/**
+ * Convert hex color to rgba
+ */
+function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/**
  * Initialize fabric canvas
  */
-function initializeFabricCanvas(canvasElement, width, height) {
+function initializeFabricCanvas(canvasElement, width, height, node) {
     const fabricCanvas = new fabric.Canvas(canvasElement, {
         width: width,
         height: height,
@@ -245,23 +633,34 @@ function initializeFabricCanvas(canvasElement, width, height) {
         selection: false
     });
 
-    // Setup drawing brush
+    // Setup initial drawing brush
     fabricCanvas.freeDrawingBrush = new fabric.PencilBrush(fabricCanvas);
     fabricCanvas.freeDrawingBrush.color = "#000000";
     fabricCanvas.freeDrawingBrush.width = 5;
 
-    // Ensure fabric commits the path immediately for visual feedback
-    fabricCanvas.on("path:created", (e) => {
-        // Make newly created paths selectable if in select mode
-        if (e.path && fabricCanvas._currentTool === "select") {
-            e.path.selectable = true;
-            e.path.evented = true;
-        }
-        fabricCanvas.renderAll();
-    });
-
-    // Store reference to current tool on canvas
+    // Store reference to current tool
     fabricCanvas._currentTool = "brush";
+
+    // Initialize history manager
+    node.historyManager = new HistoryManager(fabricCanvas);
+
+    // Add keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+        // Ctrl+Z for undo
+        if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
+            e.preventDefault();
+            if (node.historyManager) {
+                node.historyManager.undo();
+            }
+        }
+        // Ctrl+Y or Ctrl+Shift+Z for redo
+        if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) {
+            e.preventDefault();
+            if (node.historyManager) {
+                node.historyManager.redo();
+            }
+        }
+    });
 
     return fabricCanvas;
 }
@@ -321,7 +720,7 @@ function resizeCanvas(node, width, height) {
         height: height
     }, { cssOnly: false });
 
-    // Set wrapper size (important!)
+    // Set wrapper size
     canvas.wrapperEl.style.width = displayWidth + "px";
     canvas.wrapperEl.style.height = displayHeight + "px";
 
@@ -361,7 +760,7 @@ app.registerExtension({
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === "CBCanvasNode") {
-            console.log("CBCanvas Enhanced: Registering with fabric.js");
+            console.log("CBCanvas Enhanced: Registering professional drawing tool");
 
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
@@ -388,7 +787,6 @@ app.registerExtension({
                 // Create canvas wrapper
                 const canvasWrapper = document.createElement("div");
                 canvasWrapper.className = "cbcanvas-canvas-wrapper";
-                // Ensure wrapper hugs the canvas while staying centered
                 canvasWrapper.style.display = "inline-flex";
                 canvasWrapper.style.margin = "0 auto 10px";
                 canvasWrapper.style.width = "fit-content";
@@ -398,15 +796,15 @@ app.registerExtension({
                 const canvasElement = document.createElement("canvas");
                 canvasElement.id = `cbcanvas-${this.id}`;
 
-                // Initialize fabric canvas
-                this.fabricCanvas = initializeFabricCanvas(canvasElement, initialInfo.width, initialInfo.height);
+                // Initialize fabric canvas with history manager
+                this.fabricCanvas = initializeFabricCanvas(canvasElement, initialInfo.width, initialInfo.height, this);
 
                 // Set display size
                 const { displayWidth, displayHeight } = calculateDisplaySize(
                     initialInfo.width, initialInfo.height, MAX_DISPLAY_SIZE
                 );
 
-                // Set wrapper size (important!)
+                // Set wrapper size
                 this.fabricCanvas.wrapperEl.style.width = displayWidth + "px";
                 this.fabricCanvas.wrapperEl.style.height = displayHeight + "px";
 
@@ -454,6 +852,9 @@ app.registerExtension({
                 // Store instance
                 canvasInstances[this.id] = this;
 
+                // Initialize brush cursor
+                updateBrushCursor(this);
+
                 // Listen for aspect ratio changes
                 if (aspectRatioWidget) {
                     const node = this;
@@ -488,7 +889,7 @@ app.registerExtension({
                     aspectRatioWidget._original_callback = aspectRatioWidget.callback;
                 }
 
-                console.log("CBCanvas Enhanced: Node created successfully");
+                console.log("CBCanvas Enhanced: Professional drawing tool created successfully");
                 return result;
             };
 
@@ -498,6 +899,9 @@ app.registerExtension({
                 if (canvasInstances[this.id]) {
                     if (this.fabricCanvas) {
                         this.fabricCanvas.dispose();
+                    }
+                    if (this.historyManager) {
+                        this.historyManager = null;
                     }
                     delete canvasInstances[this.id];
                 }
@@ -537,5 +941,4 @@ app.registerExtension({
     }
 });
 
-console.log("CBCanvas Enhanced: Extension loaded with fabric.js");
-
+console.log("CBCanvas Enhanced: Professional drawing tool extension loaded");
