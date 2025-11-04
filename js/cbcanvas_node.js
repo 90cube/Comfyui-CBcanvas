@@ -380,6 +380,14 @@ class HistoryManager {
         } else {
             this.currentIndex++;
         }
+
+        // Update canvas data when state changes
+        if (this.layerManager.fabricCanvas && this.layerManager.fabricCanvas.node) {
+            const node = this.layerManager.fabricCanvas.node;
+            if (node.updateCanvasData) {
+                node.updateCanvasData();
+            }
+        }
     }
 
     undo() {
@@ -659,7 +667,21 @@ function createLayerPanel(node) {
 
     const header = document.createElement("div");
     header.className = "cbcanvas-layer-header";
-    header.textContent = "Layers";
+
+    const title = document.createElement("h4");
+    title.textContent = "Layers";
+    header.appendChild(title);
+
+    const newLayerBtn = document.createElement("button");
+    newLayerBtn.textContent = "+";
+    newLayerBtn.title = "New Layer";
+    newLayerBtn.onclick = () => {
+        node.layerManager.createLayer(`Layer ${node.layerManager.layers.length + 1}`);
+        node.historyManager.saveState();
+        updateLayerPanel(node);
+    };
+    header.appendChild(newLayerBtn);
+
     panel.appendChild(header);
 
     const layerList = document.createElement("div");
@@ -828,6 +850,9 @@ function initializeFabricCanvas(canvasElement, width, height, node) {
         enableRetinaScaling: true
     });
 
+    // Store node reference
+    fabricCanvas.node = node;
+
     return fabricCanvas;
 }
 
@@ -920,6 +945,45 @@ function exportCanvasWithAlpha(node) {
 
     return compositeCanvas.toDataURL('image/png');
 }
+
+// Handle input image from Python
+api.addEventListener("cbcanvas_get_image", ({ detail }) => {
+    const { unique_id, images } = detail;
+    const node = canvasInstances[unique_id];
+
+    if (!node || !images || images.length === 0) return;
+
+    // Load first image to active layer
+    const img = new Image();
+    img.onload = () => {
+        const layer = node.layerManager.getActiveLayer();
+        if (!layer) return;
+
+        const ctx = layer.ctx;
+        ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+
+        // Draw image centered and scaled to fit
+        const scale = Math.min(
+            layer.canvas.width / img.width,
+            layer.canvas.height / img.height
+        );
+        const x = (layer.canvas.width - img.width * scale) / 2;
+        const y = (layer.canvas.height - img.height * scale) / 2;
+
+        ctx.drawImage(img, x, y, img.width * scale, img.height * scale);
+
+        node.layerManager.updateComposite();
+        node.historyManager.saveState();
+
+        // Notify Python that canvas has been updated
+        api.fetchApi("/cbcanvas/check_canvas_changed", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ unique_id, is_ok: true })
+        });
+    };
+    img.src = images[0];
+});
 
 // Register extension
 app.registerExtension({
@@ -1025,6 +1089,37 @@ app.registerExtension({
                 // Store instance
                 canvasInstances[this.id] = this;
 
+                // Add hidden widget to store canvas data
+                const canvasDataWidget = this.addCustomWidget({
+                    name: "canvas_data",
+                    type: "hidden_canvas_data",
+                    value: "",
+                    options: { serialize: true }
+                });
+
+                // Update canvas data widget when canvas changes
+                const updateCanvasData = () => {
+                    if (this.layerManager) {
+                        const canvasData = exportCanvasWithAlpha(this);
+                        canvasDataWidget.value = canvasData;
+
+                        // Send to Python instance
+                        api.fetchApi("/cbcanvas/update_canvas_data", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                unique_id: this.id,
+                                canvas_data: canvasData
+                            })
+                        }).catch(err => {
+                            console.error("CBCanvas: Failed to update canvas data:", err);
+                        });
+                    }
+                };
+
+                // Store update function on node
+                this.updateCanvasData = updateCanvasData;
+
                 // Update layer panel
                 updateLayerPanel(this);
 
@@ -1075,6 +1170,19 @@ app.registerExtension({
                     delete canvasInstances[this.id];
                 }
                 return onRemoved?.apply(this, arguments);
+            };
+
+            // Before queuing prompt, send canvas data to Python
+            const onExecuted = nodeType.prototype.onExecuted;
+            nodeType.prototype.onExecuted = function (message) {
+                const result = onExecuted?.apply(this, arguments);
+
+                // Push latest canvas snapshot before execution completes
+                if (typeof this.updateCanvasData === "function") {
+                    this.updateCanvasData();
+                }
+
+                return result;
             };
 
             // Handle serialization

@@ -161,6 +161,20 @@ async def check_canvas_changed(request):
     return web.json_response({"status": "Error"}, status=200)
 
 
+@PromptServer.instance.routes.post("/cbcanvas/update_canvas_data")
+async def update_canvas_data(request):
+    """Receive canvas data from JavaScript"""
+    json_data = await request.json()
+    unique_id = json_data.get("unique_id", None)
+    canvas_data = json_data.get("canvas_data", None)
+
+    if unique_id is not None and unique_id in CBCANVAS_DICT and canvas_data:
+        CBCANVAS_DICT[unique_id].canvas_data = canvas_data
+        return web.json_response({"status": "Ok"}, status=200)
+
+    return web.json_response({"status": "Error"}, status=200)
+
+
 def wait_canvas_change(unique_id, time_out=40):
     for _ in range(time_out):
         if (
@@ -271,7 +285,7 @@ Aspect Ratio Slider (-6 to +6):
             f"CBCanvas_{unique_id}: Aspect Ratio {aspect_ratio_str} ({width}x{height})"
         )
 
-        # Handle piping input image
+        # Handle piping input image to canvas
         if update_canvas and input_image is not None:
             input_images = []
 
@@ -293,11 +307,38 @@ Aspect Ratio Slider (-6 to +6):
             )
 
             if not wait_canvas_change(unique_id):
-                print(f"CBCanvas_{unique_id}: Failed to get image!")
+                print(f"CBCanvas_{unique_id}: Failed to send image to canvas!")
             else:
-                print(f"CBCanvas_{unique_id}: Image received, canvas changed!")
+                print(f"CBCanvas_{unique_id}: Image sent to canvas successfully!")
 
-        # Load image from file
+        # Check if we have canvas data from JavaScript
+        if hasattr(self, 'canvas_data') and self.canvas_data:
+            try:
+                # Decode base64 canvas image
+                canvas_data_str = self.canvas_data.split(',')[1] if ',' in self.canvas_data else self.canvas_data
+                canvas_bytes = base64.b64decode(canvas_data_str)
+                canvas_img = Image.open(BytesIO(canvas_bytes))
+
+                # Convert to RGB and ensure correct size
+                canvas_img = canvas_img.convert("RGB")
+                if canvas_img.size != (width, height):
+                    canvas_img = canvas_img.resize((width, height), Image.LANCZOS)
+
+                # Convert to tensor
+                image_np = np.array(canvas_img).astype(np.float32) / 255.0
+                output_image = torch.from_numpy(image_np)[None,]
+
+                # Generate mask (all opaque)
+                output_mask = torch.zeros((height, width), dtype=torch.float32, device="cpu").unsqueeze(0)
+
+                print(f"CBCanvas_{unique_id}: Using canvas drawing output")
+                return (output_image, output_mask, width, height, aspect_ratio_str)
+
+            except Exception as e:
+                print(f"CBCanvas_{unique_id}: Error processing canvas data: {e}")
+                # Fall through to default image output
+
+        # Default: Load image from file (fallback)
         image_path = folder_paths.get_annotated_filepath(image)
         img = node_helpers.pillow(Image.open, image_path)
 
