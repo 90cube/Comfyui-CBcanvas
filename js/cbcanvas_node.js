@@ -1088,6 +1088,9 @@ app.registerExtension({
                 const layerPanel = createLayerPanel(this);
                 contentArea.appendChild(layerPanel);
 
+                // Update layer panel to show initial layer
+                updateLayerPanel(this);
+
                 container.appendChild(contentArea);
 
                 // Add to node
