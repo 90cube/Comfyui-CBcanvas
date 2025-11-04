@@ -420,6 +420,10 @@ class HistoryManager {
         const state = JSON.parse(this.states[this.currentIndex]);
         this.layerManager.fromJSON(state, () => {
             this.isRestoring = false;
+            // Update layer panel after restore
+            if (this.layerManager.fabricCanvas && this.layerManager.fabricCanvas.node) {
+                updateLayerPanel(this.layerManager.fabricCanvas.node);
+            }
         });
     }
 }
@@ -727,13 +731,20 @@ function createLayerPanel(node) {
 }
 
 /**
- * Update layer panel
+ * Update layer panel with retry logic
  */
-function updateLayerPanel(node) {
-    console.log("updateLayerPanel called for node:", node.id);
+function updateLayerPanel(node, retryCount = 0) {
     const layerList = document.getElementById(`layerlist-${node.id}`);
+
     if (!layerList) {
-        console.error("Layer list element not found!");
+        // DOM not ready yet, retry up to 5 times
+        if (retryCount < 5) {
+            setTimeout(() => {
+                updateLayerPanel(node, retryCount + 1);
+            }, 50 * (retryCount + 1)); // Exponential backoff: 50ms, 100ms, 150ms...
+            return;
+        }
+        console.error("CBCanvas: Layer list element not found after 5 retries for node:", node.id);
         return;
     }
 
@@ -741,7 +752,6 @@ function updateLayerPanel(node) {
 
     // Reverse order - show top layer first
     const layers = [...node.layerManager.layers].reverse();
-    console.log("Updating layer panel with", layers.length, "layers");
     layers.forEach((layer, reverseIndex) => {
         const index = layers.length - 1 - reverseIndex;
         const isActive = index === node.layerManager.activeLayerIndex;
@@ -928,11 +938,7 @@ function addImageToCanvas(node, imageUrl) {
 
         node.layerManager.updateComposite();
         node.historyManager.saveState();
-
-        // Update layer panel after adding image
-        setTimeout(() => {
-            updateLayerPanel(node);
-        }, 50);
+        updateLayerPanel(node);
     };
     img.src = imageUrl;
 }
@@ -1129,10 +1135,8 @@ app.registerExtension({
                 // Store update function on node
                 this.updateCanvasData = updateCanvasData;
 
-                // Update layer panel after DOM is ready
-                setTimeout(() => {
-                    updateLayerPanel(this);
-                }, 100);
+                // Update layer panel (will retry if DOM not ready)
+                updateLayerPanel(this);
 
                 // Listen for aspect ratio changes
                 if (aspectRatioWidget) {
@@ -1235,10 +1239,8 @@ app.registerExtension({
                 if (o.layer_data && this.layerManager) {
                     try {
                         this.layerManager.fromJSON(JSON.parse(o.layer_data), () => {
-                            setTimeout(() => {
-                                updateLayerPanel(this);
-                                console.log("CBCanvas Enhanced: Layers restored");
-                            }, 100);
+                            updateLayerPanel(this);
+                            console.log("CBCanvas Enhanced: Layers restored");
                         });
                     } catch (e) {
                         console.error("CBCanvas Enhanced: Failed to restore layers", e);
