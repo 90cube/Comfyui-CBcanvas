@@ -46,7 +46,7 @@ const DEFAULT_COLORS = [
  * Layer Class - Photoshop-like layer with raster canvas
  */
 class Layer {
-    constructor(width, height, name = "Layer") {
+    constructor(width, height, name = "Layer", backgroundColor = null) {
         this.id = Date.now() + Math.random();
         this.name = name;
         this.visible = true;
@@ -59,8 +59,13 @@ class Layer {
         this.canvas.height = height;
         this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
 
-        // Initialize with transparent background
-        this.ctx.clearRect(0, 0, width, height);
+        // Initialize with transparent or colored background
+        if (backgroundColor) {
+            this.ctx.fillStyle = backgroundColor;
+            this.ctx.fillRect(0, 0, width, height);
+        } else {
+            this.ctx.clearRect(0, 0, width, height);
+        }
 
         // Fabric.js image representation (for display only)
         this.fabricImage = null;
@@ -168,8 +173,16 @@ class LayerManager {
         this.layers = [];
         this.activeLayerIndex = -1;
 
-        // Create default layer
-        this.addLayer("Background");
+        // Create default white background layer
+        const bgLayer = new Layer(
+            this.fabricCanvas.width,
+            this.fabricCanvas.height,
+            "Background",
+            "#ffffff"
+        );
+        this.layers.push(bgLayer);
+        this.activeLayerIndex = 0;
+        this.updateComposite();
     }
 
     /**
@@ -179,7 +192,8 @@ class LayerManager {
         const layer = new Layer(
             this.fabricCanvas.width,
             this.fabricCanvas.height,
-            name || `Layer ${this.layers.length + 1}`
+            name || `Layer ${this.layers.length + 1}`,
+            null
         );
         this.layers.push(layer);
         this.activeLayerIndex = this.layers.length - 1;
@@ -793,6 +807,11 @@ function updateLayerPanel(node) {
         nameSpan.onclick = () => {
             node.layerManager.setActiveLayer(index);
             updateLayerPanel(node);
+
+            // If in select mode, refresh transform object for new active layer
+            if (node.currentTool === "select") {
+                refreshTransformObject(node);
+            }
         };
 
         const delBtn = document.createElement("button");
@@ -814,6 +833,36 @@ function updateLayerPanel(node) {
 }
 
 /**
+ * Refresh transform object for current active layer
+ */
+function refreshTransformObject(node) {
+    const canvas = node.fabricCanvas;
+
+    // Remove existing transform object
+    if (node.transformObject) {
+        canvas.remove(node.transformObject);
+        node.transformObject = null;
+    }
+
+    // Create new transform object for active layer
+    const layer = node.layerManager.getActiveLayer();
+    if (layer) {
+        const dataUrl = layer.canvas.toDataURL();
+        fabric.Image.fromURL(dataUrl, (img) => {
+            img.selectable = true;
+            img.hasControls = true;
+            img.hasBorders = true;
+            img.lockRotation = false;
+
+            node.transformObject = img;
+            canvas.add(img);
+            canvas.setActiveObject(img);
+            canvas.renderAll();
+        });
+    }
+}
+
+/**
  * Update canvas mode based on current tool
  */
 function updateCanvasMode(node) {
@@ -823,23 +872,9 @@ function updateCanvasMode(node) {
         canvas.defaultCursor = 'default';
         canvas.selection = true;
 
-        // Convert active layer to fabric object for transformation
-        const layer = node.layerManager.getActiveLayer();
-        if (layer && !node.transformObject) {
-            // Create fabric image from layer canvas
-            const dataUrl = layer.canvas.toDataURL();
-            fabric.Image.fromURL(dataUrl, (img) => {
-                img.selectable = true;
-                img.hasControls = true;
-                img.hasBorders = true;
-                img.lockRotation = false;
-
-                // Store reference
-                node.transformObject = img;
-                canvas.add(img);
-                canvas.setActiveObject(img);
-                canvas.renderAll();
-            });
+        // Create transform object if not exists
+        if (!node.transformObject) {
+            refreshTransformObject(node);
         }
     } else {
         canvas.defaultCursor = 'crosshair';
@@ -906,12 +941,11 @@ function setupDrawingHandlers(node) {
         const pressure = options.e.pressure || 1.0;
         node.currentStroke.push({ x: pointer.x, y: pointer.y, pressure });
 
-        // Draw preview on fabric canvas
+        // Draw preview directly on active layer
         if (node.currentStroke.length > 1) {
             const layer = node.layerManager.getActiveLayer();
             if (!layer) return;
 
-            const ctx = canvas.getContext();
             const p1 = node.currentStroke[node.currentStroke.length - 2];
             const p2 = node.currentStroke[node.currentStroke.length - 1];
 
@@ -922,6 +956,8 @@ function setupDrawingHandlers(node) {
                 const avgPressure = (pressure1 + pressure2) / 2;
                 const width = Math.max(1, node.brushSize * avgPressure);
 
+                // Draw on layer canvas
+                const ctx = layer.ctx;
                 ctx.strokeStyle = color;
                 ctx.lineWidth = width;
                 ctx.lineCap = 'round';
@@ -930,7 +966,22 @@ function setupDrawingHandlers(node) {
                 ctx.moveTo(p1.x, p1.y);
                 ctx.lineTo(p2.x, p2.y);
                 ctx.stroke();
+            } else if (node.currentTool === "eraser") {
+                // Draw eraser preview on layer canvas
+                const ctx = layer.ctx;
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.lineWidth = node.brushSize;
+                ctx.stroke();
+                ctx.globalCompositeOperation = 'source-over';
             }
+
+            // Update composite to show changes
+            node.layerManager.updateComposite();
         }
     });
 
@@ -939,20 +990,10 @@ function setupDrawingHandlers(node) {
         if (!node.isDrawing) return;
         node.isDrawing = false;
 
-        const layer = node.layerManager.getActiveLayer();
-        if (!layer || node.currentStroke.length < 2) return;
-
-        // Commit stroke to layer
-        if (node.currentTool === "brush") {
-            const color = hexToRgba(node.brushColor, node.brushOpacity);
-            layer.drawStroke(node.currentStroke, color, node.brushSize, node.pressureSensitivity);
-        } else if (node.currentTool === "eraser") {
-            layer.erase(node.currentStroke, node.brushSize);
+        // Stroke already drawn in mouse:move, just save history
+        if (node.currentStroke.length >= 2) {
+            node.historyManager.saveState();
         }
-
-        // Update composite and save history
-        node.layerManager.updateComposite();
-        node.historyManager.saveState();
 
         node.currentStroke = [];
     });
@@ -977,16 +1018,15 @@ function initializeFabricCanvas(canvasElement, width, height, node) {
 }
 
 /**
- * Add image to active layer
+ * Add image to new layer above current
  */
 function addImageToCanvas(node, imageUrl) {
     const img = new Image();
     img.onload = () => {
-        const layer = node.layerManager.getActiveLayer();
-        if (!layer) return;
-
-        const canvas = layer.canvas;
-        const ctx = layer.ctx;
+        // Create new layer for the image
+        const newLayer = node.layerManager.addLayer(`Image ${node.layerManager.layers.length}`);
+        const canvas = newLayer.canvas;
+        const ctx = newLayer.ctx;
 
         // Scale image to fit if too large
         const maxWidth = canvas.width * 0.8;
