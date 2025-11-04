@@ -494,6 +494,7 @@ function createToolbar(node) {
     node.colorPalette = [...DEFAULT_COLORS];
     node.isDrawing = false;
     node.currentStroke = [];
+    node.transformObject = null;
 
     // Tool buttons - Row 1: Drawing Tools
     const tools = [
@@ -816,13 +817,63 @@ function updateLayerPanel(node) {
  * Update canvas mode based on current tool
  */
 function updateCanvasMode(node) {
-    // Just update the cursor, actual drawing is handled by mouse events
     const canvas = node.fabricCanvas;
 
     if (node.currentTool === "select") {
         canvas.defaultCursor = 'default';
+        canvas.selection = true;
+
+        // Convert active layer to fabric object for transformation
+        const layer = node.layerManager.getActiveLayer();
+        if (layer && !node.transformObject) {
+            // Create fabric image from layer canvas
+            const dataUrl = layer.canvas.toDataURL();
+            fabric.Image.fromURL(dataUrl, (img) => {
+                img.selectable = true;
+                img.hasControls = true;
+                img.hasBorders = true;
+                img.lockRotation = false;
+
+                // Store reference
+                node.transformObject = img;
+                canvas.add(img);
+                canvas.setActiveObject(img);
+                canvas.renderAll();
+            });
+        }
     } else {
         canvas.defaultCursor = 'crosshair';
+        canvas.selection = false;
+
+        // Bake transform back to layer
+        if (node.transformObject) {
+            const layer = node.layerManager.getActiveLayer();
+            if (layer) {
+                // Clear layer
+                layer.clear();
+
+                // Get transformed image data
+                const transformedDataUrl = node.transformObject.toDataURL();
+                const img = new Image();
+                img.onload = () => {
+                    // Draw transformed image back to layer
+                    layer.ctx.drawImage(img,
+                        node.transformObject.left,
+                        node.transformObject.top,
+                        node.transformObject.width * node.transformObject.scaleX,
+                        node.transformObject.height * node.transformObject.scaleY
+                    );
+                    node.layerManager.updateComposite();
+                    node.historyManager.saveState();
+                };
+                img.src = transformedDataUrl;
+            }
+
+            // Remove transform object
+            canvas.remove(node.transformObject);
+            node.transformObject = null;
+            canvas.renderAll();
+        }
     }
 }
 
