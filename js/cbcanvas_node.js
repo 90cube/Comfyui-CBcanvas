@@ -1,6 +1,6 @@
 /**
- * CBCanvas Node Enhanced - Professional Drawing Tool
- * Features: Brush, Eraser, Shapes, Undo/Redo, Opacity, Color Palette
+ * CBCanvas Node Enhanced - Professional Drawing Tool with Wacom Support
+ * Features: Pen Pressure, Brush, Eraser, Shapes, Undo/Redo, Opacity, Color Palette
  */
 
 import { app } from "../../scripts/app.js";
@@ -163,6 +163,115 @@ class HistoryManager {
 }
 
 /**
+ * Pressure Sensitive Brush for Wacom Tablets
+ */
+class PressureSensitiveBrush extends fabric.PencilBrush {
+    constructor(canvas) {
+        super(canvas);
+        this.pressureSensitivity = 1.0; // 0.0 to 2.0
+        this.baseWidth = 5;
+        this.points = [];
+        this._isDrawing = false;
+    }
+
+    onMouseDown(pointer, options) {
+        if (!this.canvas._isCurrentlyDrawing) {
+            this.canvas._isCurrentlyDrawing = true;
+        }
+        this._isDrawing = true;
+        this.points = [];
+
+        const pressure = options.e.pressure || 1.0;
+        const point = { x: pointer.x, y: pointer.y, pressure: pressure };
+        this.points.push(point);
+
+        this.canvas.contextTop.strokeStyle = this.color;
+        this.canvas.contextTop.lineCap = 'round';
+        this.canvas.contextTop.lineJoin = 'round';
+    }
+
+    onMouseMove(pointer, options) {
+        if (!this._isDrawing) return;
+
+        const pressure = options.e.pressure || 1.0;
+        const point = { x: pointer.x, y: pointer.y, pressure: pressure };
+        this.points.push(point);
+
+        if (this.points.length > 1) {
+            const p1 = this.points[this.points.length - 2];
+            const p2 = this.points[this.points.length - 1];
+            this.drawSegment(p1, p2);
+        }
+
+        this.canvas.renderTop();
+    }
+
+    onMouseUp(options) {
+        if (!this._isDrawing) return;
+        this._isDrawing = false;
+        this.canvas._isCurrentlyDrawing = false;
+
+        // Convert the pressure-sensitive drawing to a path
+        this.convertToPath();
+        this.points = [];
+    }
+
+    drawSegment(p1, p2) {
+        const ctx = this.canvas.contextTop;
+        const width1 = this.calculateWidth(p1.pressure);
+        const width2 = this.calculateWidth(p2.pressure);
+        const avgWidth = (width1 + width2) / 2;
+
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineWidth = avgWidth;
+        ctx.stroke();
+    }
+
+    calculateWidth(pressure) {
+        // Apply pressure sensitivity curve
+        const adjustedPressure = Math.pow(pressure, 1 / this.pressureSensitivity);
+        return Math.max(1, this.baseWidth * adjustedPressure);
+    }
+
+    convertToPath() {
+        if (this.points.length < 2) return;
+
+        // Create a smooth path from points
+        let pathData = `M ${this.points[0].x} ${this.points[0].y}`;
+
+        for (let i = 1; i < this.points.length; i++) {
+            const xc = (this.points[i].x + this.points[i - 1].x) / 2;
+            const yc = (this.points[i].y + this.points[i - 1].y) / 2;
+            pathData += ` Q ${this.points[i - 1].x} ${this.points[i - 1].y} ${xc} ${yc}`;
+        }
+
+        // Add last point
+        const lastPoint = this.points[this.points.length - 1];
+        pathData += ` L ${lastPoint.x} ${lastPoint.y}`;
+
+        // Calculate average width from all pressures
+        const avgPressure = this.points.reduce((sum, p) => sum + p.pressure, 0) / this.points.length;
+        const avgWidth = this.calculateWidth(avgPressure);
+
+        const path = new fabric.Path(pathData, {
+            fill: null,
+            stroke: this.color,
+            strokeWidth: avgWidth,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            selectable: false,
+            evented: false
+        });
+
+        this.canvas.add(path);
+        this.canvas.clearContext(this.canvas.contextTop);
+        this.canvas.renderAll();
+    }
+}
+
+/**
  * Create toolbar with enhanced tools
  */
 function createToolbar(node) {
@@ -174,6 +283,8 @@ function createToolbar(node) {
     node.brushSize = 5;
     node.brushColor = "#000000";
     node.brushOpacity = 1.0;
+    node.pressureSensitivity = 1.0;
+    node.pressureEnabled = true;
     node.colorPalette = [...DEFAULT_COLORS];
 
     // Tool buttons - Row 1: Drawing Tools
@@ -294,6 +405,22 @@ function createToolbar(node) {
     };
     controlsRow.appendChild(opacityControl);
 
+    // Pressure sensitivity slider
+    const pressureControl = document.createElement("div");
+    pressureControl.className = "cbcanvas-control";
+    pressureControl.innerHTML = `
+        <label>Pressure: <span id="pressure-${node.id}">${Math.round(node.pressureSensitivity * 100)}%</span></label>
+        <input type="range" min="20" max="200" value="${node.pressureSensitivity * 100}"
+               class="cbcanvas-slider" id="pressureslider-${node.id}">
+    `;
+    const pressureSlider = pressureControl.querySelector("input");
+    pressureSlider.oninput = (e) => {
+        node.pressureSensitivity = parseInt(e.target.value) / 100;
+        document.getElementById(`pressure-${node.id}`).textContent = Math.round(node.pressureSensitivity * 100) + "%";
+        updateBrushSettings(node);
+    };
+    controlsRow.appendChild(pressureControl);
+
     // Color picker
     const colorControl = document.createElement("div");
     colorControl.className = "cbcanvas-control";
@@ -383,19 +510,65 @@ function updateCanvasMode(node) {
 }
 
 /**
- * Setup brush mode
+ * Setup brush mode with pressure sensitivity
  */
 function setupBrushMode(node) {
     const canvas = node.fabricCanvas;
-    canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+
+    // Use pressure-sensitive brush
+    canvas.freeDrawingBrush = new PressureSensitiveBrush(canvas);
     canvas.freeDrawingBrush.color = hexToRgba(node.brushColor, node.brushOpacity);
-    canvas.freeDrawingBrush.width = node.brushSize;
+    canvas.freeDrawingBrush.baseWidth = node.brushSize;
+    canvas.freeDrawingBrush.pressureSensitivity = node.pressureSensitivity;
+
     canvas.isDrawingMode = true;
     canvas.selection = false;
     canvas.forEachObject(obj => {
         obj.selectable = false;
         obj.evented = false;
     });
+
+    // Setup pen eraser button detection
+    setupPenEraserDetection(node);
+}
+
+/**
+ * Setup pen eraser button detection for Wacom tablets
+ */
+function setupPenEraserDetection(node) {
+    const canvas = node.fabricCanvas;
+
+    // Remove old listener if exists
+    if (node._penEraserListener) {
+        canvas.upperCanvasEl.removeEventListener('pointerdown', node._penEraserListener);
+    }
+
+    // Add pen eraser detection
+    node._penEraserListener = (e) => {
+        // Check if pen is flipped (eraser button pressed)
+        // pointerType === 'pen' and buttons === 32 indicates eraser
+        if (e.pointerType === 'pen' && e.buttons === 32) {
+            // Temporarily switch to eraser
+            if (node.currentTool === 'brush') {
+                node._tempEraserMode = true;
+                const oldColor = canvas.freeDrawingBrush.color;
+                canvas.freeDrawingBrush = new fabric.EraserBrush(canvas);
+                canvas.freeDrawingBrush.width = node.brushSize;
+
+                // Switch back on pointerup
+                const restoreBrush = () => {
+                    if (node._tempEraserMode) {
+                        setupBrushMode(node);
+                        node._tempEraserMode = false;
+                    }
+                    canvas.upperCanvasEl.removeEventListener('pointerup', restoreBrush);
+                };
+                canvas.upperCanvasEl.addEventListener('pointerup', restoreBrush, { once: true });
+            }
+        }
+    };
+
+    canvas.upperCanvasEl.addEventListener('pointerdown', node._penEraserListener);
 }
 
 /**
@@ -556,9 +729,10 @@ function updateBrushSettings(node) {
         }
 
         if (node.currentTool === "brush") {
-            canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+            canvas.freeDrawingBrush = new PressureSensitiveBrush(canvas);
             canvas.freeDrawingBrush.color = hexToRgba(node.brushColor, node.brushOpacity);
-            canvas.freeDrawingBrush.width = node.brushSize;
+            canvas.freeDrawingBrush.baseWidth = node.brushSize;
+            canvas.freeDrawingBrush.pressureSensitivity = node.pressureSensitivity;
         } else if (node.currentTool === "eraser") {
             canvas.freeDrawingBrush = new fabric.EraserBrush(canvas);
             canvas.freeDrawingBrush.width = node.brushSize;
@@ -633,10 +807,11 @@ function initializeFabricCanvas(canvasElement, width, height, node) {
         selection: false
     });
 
-    // Setup initial drawing brush
-    fabricCanvas.freeDrawingBrush = new fabric.PencilBrush(fabricCanvas);
+    // Setup initial drawing brush with pressure sensitivity
+    fabricCanvas.freeDrawingBrush = new PressureSensitiveBrush(fabricCanvas);
     fabricCanvas.freeDrawingBrush.color = "#000000";
-    fabricCanvas.freeDrawingBrush.width = 5;
+    fabricCanvas.freeDrawingBrush.baseWidth = 5;
+    fabricCanvas.freeDrawingBrush.pressureSensitivity = 1.0;
 
     // Store reference to current tool
     fabricCanvas._currentTool = "brush";
@@ -745,7 +920,7 @@ app.registerExtension({
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === "CBCanvasNode") {
-            console.log("CBCanvas Enhanced: Registering professional drawing tool");
+            console.log("CBCanvas Enhanced: Registering with Wacom tablet support");
 
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
@@ -781,7 +956,7 @@ app.registerExtension({
                 const canvasElement = document.createElement("canvas");
                 canvasElement.id = `cbcanvas-${this.id}`;
 
-                // Initialize fabric canvas with history manager
+                // Initialize fabric canvas with pressure sensitivity
                 this.fabricCanvas = initializeFabricCanvas(canvasElement, initialInfo.width, initialInfo.height, this);
 
                 // Set display size
@@ -874,7 +1049,7 @@ app.registerExtension({
                     aspectRatioWidget._original_callback = aspectRatioWidget.callback;
                 }
 
-                console.log("CBCanvas Enhanced: Professional drawing tool created successfully");
+                console.log("CBCanvas Enhanced: Wacom tablet support enabled");
                 return result;
             };
 
@@ -883,6 +1058,10 @@ app.registerExtension({
             nodeType.prototype.onRemoved = function () {
                 if (canvasInstances[this.id]) {
                     if (this.fabricCanvas) {
+                        // Clean up pen eraser listener
+                        if (this._penEraserListener) {
+                            this.fabricCanvas.upperCanvasEl.removeEventListener('pointerdown', this._penEraserListener);
+                        }
                         this.fabricCanvas.dispose();
                     }
                     if (this.historyManager) {
@@ -926,4 +1105,4 @@ app.registerExtension({
     }
 });
 
-console.log("CBCanvas Enhanced: Professional drawing tool extension loaded");
+console.log("CBCanvas Enhanced: Loaded with Wacom tablet pressure sensitivity support");
