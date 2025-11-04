@@ -188,6 +188,13 @@ class LayerManager {
     }
 
     /**
+     * Create new layer (alias for addLayer)
+     */
+    createLayer(name = "Layer") {
+        return this.addLayer(name);
+    }
+
+    /**
      * Get active layer
      */
     getActiveLayer() {
