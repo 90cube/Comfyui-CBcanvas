@@ -707,15 +707,10 @@ function createLayerPanel(node) {
     newLayerBtn.textContent = "+";
     newLayerBtn.title = "New Layer";
     newLayerBtn.onclick = () => {
-        console.log("Layer panel + button clicked");
-        console.log("Node:", node, "LayerManager:", node.layerManager);
         if (node.layerManager) {
-            const newLayer = node.layerManager.createLayer(`Layer ${node.layerManager.layers.length + 1}`);
-            console.log("New layer created:", newLayer, "Total layers:", node.layerManager.layers.length);
+            node.layerManager.createLayer(`Layer ${node.layerManager.layers.length + 1}`);
             node.historyManager.saveState();
             updateLayerPanel(node);
-        } else {
-            console.error("LayerManager not found on node!");
         }
     };
     header.appendChild(newLayerBtn);
@@ -727,24 +722,21 @@ function createLayerPanel(node) {
     layerList.id = `layerlist-${node.id}`;
     panel.appendChild(layerList);
 
+    // Store reference to layerList element on node
+    node.layerListElement = layerList;
+
     return panel;
 }
 
 /**
- * Update layer panel with retry logic
+ * Update layer panel - uses direct element reference
  */
-function updateLayerPanel(node, retryCount = 0) {
-    const layerList = document.getElementById(`layerlist-${node.id}`);
+function updateLayerPanel(node) {
+    // Use stored reference instead of getElementById
+    const layerList = node.layerListElement;
 
     if (!layerList) {
-        // DOM not ready yet, retry up to 5 times
-        if (retryCount < 5) {
-            setTimeout(() => {
-                updateLayerPanel(node, retryCount + 1);
-            }, 50 * (retryCount + 1)); // Exponential backoff: 50ms, 100ms, 150ms...
-            return;
-        }
-        console.error("CBCanvas: Layer list element not found after 5 retries for node:", node.id);
+        console.error("CBCanvas: Layer list element reference not found on node:", node.id);
         return;
     }
 
