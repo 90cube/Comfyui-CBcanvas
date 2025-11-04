@@ -923,6 +923,45 @@ function updateLayerPanel(node) {
 }
 
 /**
+ * Get bounding box of non-transparent pixels in canvas
+ */
+function getContentBounds(canvas) {
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+
+    let minX = canvas.width;
+    let minY = canvas.height;
+    let maxX = 0;
+    let maxY = 0;
+
+    // Scan for non-transparent pixels
+    for (let y = 0; y < canvas.height; y++) {
+        for (let x = 0; x < canvas.width; x++) {
+            const alpha = data[(y * canvas.width + x) * 4 + 3];
+            if (alpha > 0) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+    }
+
+    // If no content found, return null
+    if (minX > maxX || minY > maxY) {
+        return null;
+    }
+
+    return {
+        x: minX,
+        y: minY,
+        width: maxX - minX + 1,
+        height: maxY - minY + 1
+    };
+}
+
+/**
  * Refresh transform object for current active layer
  */
 function refreshTransformObject(node) {
@@ -940,12 +979,55 @@ function refreshTransformObject(node) {
     // Create new transform object for active layer
     const layer = node.layerManager.getActiveLayer();
     if (layer) {
-        const dataUrl = layer.canvas.toDataURL();
+        // Get content bounds
+        const bounds = getContentBounds(layer.canvas);
+
+        if (!bounds) {
+            // Empty layer, use full canvas
+            const dataUrl = layer.canvas.toDataURL();
+            fabric.Image.fromURL(dataUrl, (img) => {
+                img.selectable = true;
+                img.hasControls = true;
+                img.hasBorders = true;
+                img.lockRotation = false;
+
+                node.transformObject = img;
+                canvas.add(img);
+                canvas.setActiveObject(img);
+
+                // Update composite to hide original layer
+                node.layerManager.updateComposite();
+                canvas.renderAll();
+            });
+            return;
+        }
+
+        // Create cropped canvas with only content
+        const croppedCanvas = document.createElement('canvas');
+        croppedCanvas.width = bounds.width;
+        croppedCanvas.height = bounds.height;
+        const croppedCtx = croppedCanvas.getContext('2d');
+
+        // Copy content region
+        croppedCtx.drawImage(
+            layer.canvas,
+            bounds.x, bounds.y, bounds.width, bounds.height,
+            0, 0, bounds.width, bounds.height
+        );
+
+        const dataUrl = croppedCanvas.toDataURL();
         fabric.Image.fromURL(dataUrl, (img) => {
-            img.selectable = true;
-            img.hasControls = true;
-            img.hasBorders = true;
-            img.lockRotation = false;
+            img.set({
+                left: bounds.x,
+                top: bounds.y,
+                selectable: true,
+                hasControls: true,
+                hasBorders: true,
+                lockRotation: false
+            });
+
+            // Store original bounds for later restoration
+            img.cbcanvas_originalBounds = bounds;
 
             node.transformObject = img;
             canvas.add(img);
@@ -983,24 +1065,36 @@ function updateCanvasMode(node) {
                 // Clear layer
                 layer.clear();
 
-                // Get transformed image data
-                const transformedDataUrl = node.transformObject.toDataURL();
-                const img = new Image();
-                img.onload = () => {
-                    // Draw transformed image back to layer
-                    layer.ctx.drawImage(img,
-                        node.transformObject.left,
-                        node.transformObject.top,
-                        node.transformObject.width * node.transformObject.scaleX,
-                        node.transformObject.height * node.transformObject.scaleY
-                    );
+                const obj = node.transformObject;
+                const ctx = layer.ctx;
 
-                    // Clear transforming flag and update composite
-                    node.transformingLayerIndex = -1;
-                    node.layerManager.updateComposite();
-                    node.historyManager.saveState();
-                };
-                img.src = transformedDataUrl;
+                // Save context state
+                ctx.save();
+
+                // Apply transformations
+                ctx.translate(obj.left + (obj.width * obj.scaleX) / 2, obj.top + (obj.height * obj.scaleY) / 2);
+                ctx.rotate((obj.angle || 0) * Math.PI / 180);
+                ctx.scale(obj.scaleX || 1, obj.scaleY || 1);
+
+                // Get the actual image element from fabric object
+                const img = obj._element;
+                if (img) {
+                    ctx.drawImage(
+                        img,
+                        -obj.width / 2,
+                        -obj.height / 2,
+                        obj.width,
+                        obj.height
+                    );
+                }
+
+                // Restore context state
+                ctx.restore();
+
+                // Clear transforming flag and update composite
+                node.transformingLayerIndex = -1;
+                node.layerManager.updateComposite();
+                node.historyManager.saveState();
             }
 
             // Remove transform object
@@ -1384,23 +1478,42 @@ app.registerExtension({
                     aspectRatioWidget._original_callback = aspectRatioWidget.callback;
                 }
 
-                // Load initial image to canvas if 'image' widget has a value
+                // Setup image widget to load on change
                 const imageWidget = this.widgets?.find(w => w.name === "image");
-                if (imageWidget && imageWidget.value) {
-                    // Wait a bit for everything to initialize
-                    setTimeout(() => {
-                        const imagePath = `/view?filename=${imageWidget.value}&type=input`;
-                        fetch(imagePath)
-                            .then(response => response.blob())
-                            .then(blob => {
-                                const reader = new FileReader();
-                                reader.onload = (e) => {
-                                    addImageToCanvas(this, e.target.result);
-                                };
-                                reader.readAsDataURL(blob);
-                            })
-                            .catch(err => console.error("CBCanvas: Failed to load initial image:", err));
-                    }, 500);
+                if (imageWidget) {
+                    const node = this;
+
+                    // Save original callback
+                    const originalCallback = imageWidget.callback;
+
+                    // Override callback to load image when changed
+                    imageWidget.callback = function(value) {
+                        if (value && node.layerManager) {
+                            const imagePath = `/view?filename=${value}&type=input`;
+                            fetch(imagePath)
+                                .then(response => response.blob())
+                                .then(blob => {
+                                    const reader = new FileReader();
+                                    reader.onload = (e) => {
+                                        addImageToCanvas(node, e.target.result);
+                                    };
+                                    reader.readAsDataURL(blob);
+                                })
+                                .catch(err => console.error("CBCanvas: Failed to load image:", err));
+                        }
+
+                        // Call original callback if exists
+                        if (originalCallback) {
+                            originalCallback.call(this, value);
+                        }
+                    };
+
+                    // Load initial image if present
+                    if (imageWidget.value) {
+                        setTimeout(() => {
+                            imageWidget.callback(imageWidget.value);
+                        }, 500);
+                    }
                 }
 
                 return result;
