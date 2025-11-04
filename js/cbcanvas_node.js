@@ -703,9 +703,16 @@ function createLayerPanel(node) {
     newLayerBtn.textContent = "+";
     newLayerBtn.title = "New Layer";
     newLayerBtn.onclick = () => {
-        node.layerManager.createLayer(`Layer ${node.layerManager.layers.length + 1}`);
-        node.historyManager.saveState();
-        updateLayerPanel(node);
+        console.log("Layer panel + button clicked");
+        console.log("Node:", node, "LayerManager:", node.layerManager);
+        if (node.layerManager) {
+            const newLayer = node.layerManager.createLayer(`Layer ${node.layerManager.layers.length + 1}`);
+            console.log("New layer created:", newLayer, "Total layers:", node.layerManager.layers.length);
+            node.historyManager.saveState();
+            updateLayerPanel(node);
+        } else {
+            console.error("LayerManager not found on node!");
+        }
     };
     header.appendChild(newLayerBtn);
 
@@ -921,6 +928,11 @@ function addImageToCanvas(node, imageUrl) {
 
         node.layerManager.updateComposite();
         node.historyManager.saveState();
+
+        // Update layer panel after adding image
+        setTimeout(() => {
+            updateLayerPanel(node);
+        }, 50);
     };
     img.src = imageUrl;
 }
@@ -1117,8 +1129,10 @@ app.registerExtension({
                 // Store update function on node
                 this.updateCanvasData = updateCanvasData;
 
-                // Update layer panel
-                updateLayerPanel(this);
+                // Update layer panel after DOM is ready
+                setTimeout(() => {
+                    updateLayerPanel(this);
+                }, 100);
 
                 // Listen for aspect ratio changes
                 if (aspectRatioWidget) {
@@ -1221,8 +1235,10 @@ app.registerExtension({
                 if (o.layer_data && this.layerManager) {
                     try {
                         this.layerManager.fromJSON(JSON.parse(o.layer_data), () => {
-                            updateLayerPanel(this);
-                            console.log("CBCanvas Enhanced: Layers restored");
+                            setTimeout(() => {
+                                updateLayerPanel(this);
+                                console.log("CBCanvas Enhanced: Layers restored");
+                            }, 100);
                         });
                     } catch (e) {
                         console.error("CBCanvas Enhanced: Failed to restore layers", e);
